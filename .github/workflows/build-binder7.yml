@@ -1,0 +1,82 @@
+name: J250F Binder 7 kernel
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-binder7.yml'
+      - 'arch/arm/configs/j2y18lte_defconfig'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev libncurses-dev device-tree-compiler python3
+
+      - name: Fetch Android GCC 4.9
+        run: |
+          git clone --depth 1 --branch android-8.1.0_r1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$RUNNER_TEMP/gcc49"
+          echo "CROSS_COMPILE=$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-gcc" --version
+
+      - name: Configure and verify Binder 7
+        run: |
+          set -euo pipefail
+          make O=out ARCH=arm HOSTCFLAGS=-fcommon j2y18lte_defconfig
+          scripts/config --file out/.config --enable ANDROID_BINDER_IPC_32BIT
+          make O=out ARCH=arm HOSTCFLAGS=-fcommon olddefconfig
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
+          grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
+
+      - name: Build kernel
+        run: |
+          set -euo pipefail
+          make -j"$(nproc)" O=out ARCH=arm HOSTCFLAGS=-fcommon zImage dtbs 2>&1 | tee build.log
+
+      - name: Prepare verified artifacts
+        run: |
+          set -euo pipefail
+          test -s out/arch/arm/boot/zImage
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
+          mkdir -p artifacts
+          cp out/arch/arm/boot/zImage artifacts/
+          cp out/.config artifacts/kernel.config
+          cp out/System.map artifacts/
+          find out/arch/arm/boot -name '*.dtb' -type f -print0 | tar --null -T - -czf artifacts/device-trees.tar.gz
+          git rev-parse HEAD > artifacts/source-commit.txt
+          git -C "$RUNNER_TEMP/gcc49" rev-parse HEAD > artifacts/compiler-commit.txt
+          printf '%s\n' 'Kernel only. Not a flashable boot image. Preserve the backed-up ramdisk and verify packaging before flashing.' > artifacts/READ-ME.txt
+          (cd artifacts && sha256sum zImage kernel.config System.map device-trees.tar.gz > SHA256SUMS)
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: j250f-binder7-kernel-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.run_number }}
+          path: |
+            build.log
+            out/.config
+          if-no-files-found: ignore
