@@ -42,6 +42,8 @@ jobs:
           make O=out ARCH=arm HOSTCFLAGS=-fcommon olddefconfig
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
+          grep -qx 'CONFIG_QUOTA=y' out/.config
+          grep -qx 'CONFIG_QFMT_V2=y' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
 
@@ -56,6 +58,8 @@ jobs:
           test -s out/arch/arm/boot/zImage
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
+          grep -qx 'CONFIG_QUOTA=y' out/.config
+          grep -qx 'CONFIG_QFMT_V2=y' out/.config
           mkdir -p artifacts
           cp out/arch/arm/boot/zImage artifacts/
           cp out/.config artifacts/kernel.config
