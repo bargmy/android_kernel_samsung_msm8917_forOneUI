@@ -20,7 +20,7 @@ config ANDROID_BINDER_IPC
 	  between said processes.
 
 config ANDROID_BINDER_IPC_32BIT
-	bool
+	bool "Use legacy 32-bit Binder IPC layout (protocol 7)"
 	depends on !64BIT && ANDROID_BINDER_IPC
 	default n
 	---help---

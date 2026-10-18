@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/build-binder7.yml'
       - 'arch/arm/configs/j2y18lte_defconfig'
+      - 'drivers/staging/android/Kconfig'
 
 permissions:
   contents: read
@@ -36,23 +37,24 @@ jobs:
 
       - name: Configure and verify Binder 7
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           make O=out ARCH=arm HOSTCFLAGS=-fcommon j2y18lte_defconfig
-          scripts/config --file out/.config --enable ANDROID_BINDER_IPC_32BIT
           make O=out ARCH=arm HOSTCFLAGS=-fcommon olddefconfig
+          grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
 
       - name: Build kernel
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           make -j"$(nproc)" O=out ARCH=arm HOSTCFLAGS=-fcommon zImage dtbs 2>&1 | tee build.log
 
       - name: Prepare verified artifacts
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           test -s out/arch/arm/boot/zImage
+          grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           mkdir -p artifacts
           cp out/arch/arm/boot/zImage artifacts/
@@ -79,4 +81,5 @@ jobs:
           path: |
             build.log
             out/.config
+          include-hidden-files: true
           if-no-files-found: ignore
