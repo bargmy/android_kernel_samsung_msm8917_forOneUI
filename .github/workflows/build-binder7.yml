@@ -27,19 +27,45 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev libncurses-dev device-tree-compiler python3
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev libncurses-dev device-tree-compiler python3 ccache
+
+      - name: Cache GCC toolchain
+        id: gcc-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/gcc49
+          key: gcc49-${{ runner.os }}-android-8.1.0_r1-43bf3bf040b873cb1334cdc0687a03d8d6f4b1c8-v1
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ runner.os }}-gcc49-j250f-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ccache-${{ runner.os }}-gcc49-j250f-v1-
+
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          ccache --max-size=2G
+          ccache --zero-stats
 
       - name: Fetch Android GCC 4.9
         run: |
-          git clone --depth 1 --branch android-8.1.0_r1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$RUNNER_TEMP/gcc49"
+          if [ ! -x "$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-gcc" ]; then
+            git clone --depth 1 --branch android-8.1.0_r1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 "$RUNNER_TEMP/gcc49"
+          fi
+          test "$(git -C "$RUNNER_TEMP/gcc49" rev-parse HEAD)" = 43bf3bf040b873cb1334cdc0687a03d8d6f4b1c8
           echo "CROSS_COMPILE=$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-gcc" --version
 
       - name: Configure and verify Binder 7
         run: |
           set -euxo pipefail
-          make O=out ARCH=arm HOSTCFLAGS=-fcommon j2y18lte_defconfig
-          make O=out ARCH=arm HOSTCFLAGS=-fcommon olddefconfig
+          make O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon j2y18lte_defconfig
+          make O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon olddefconfig
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_QUOTA=y' out/.config
@@ -50,7 +76,11 @@ jobs:
       - name: Build kernel
         run: |
           set -euxo pipefail
-          make -j"$(nproc)" O=out ARCH=arm HOSTCFLAGS=-fcommon zImage dtbs 2>&1 | tee build.log
+          make -j"$(nproc)" O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon zImage dtbs 2>&1 | tee build.log
+
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache --show-stats
 
       - name: Prepare verified artifacts
         run: |
