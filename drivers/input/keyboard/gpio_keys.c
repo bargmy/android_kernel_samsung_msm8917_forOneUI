@@ -791,6 +791,13 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 
 	input_set_capability(input, button->type ?: EV_KEY, button->code);
 
+#ifdef CONFIG_SEC_J2Y18LTE_PROJECT
+	/* Sleeping Home presses are reported as KEY_WAKEUP, not KEY_HOMEPAGE. */
+	if ((button->type ?: EV_KEY) == EV_KEY &&
+	    button->code == KEY_HOMEPAGE)
+		input_set_capability(input, EV_KEY, KEY_WAKEUP);
+#endif
+
 	/*
 	 * Install custom action to cancel debounce timer and
 	 * workqueue item.
