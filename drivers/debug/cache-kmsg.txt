@@ -10,6 +10,12 @@ mount /cache. The private mount is not attached to Android's mount namespace;
 the files are nevertheless visible when recovery mounts the same partition.
 An already mounted ext4 superblock is reused by the VFS.
 
+CONFIG_DEVTMPFS=y is required. The worker unshares its fs_struct, privately
+opens devtmpfs, and uses its kernel-created /mmcblk0p46 node. It does not wait
+for Android ueventd to create /dev/block nodes. Only the worker's root/pwd
+change; Android's /dev, root, and mount namespace are left untouched.
+CONFIG_DEVTMPFS_MOUNT remains disabled to avoid automatic namespace mounts.
+
 Output: /cache/kernel-latest-0.log and /cache/kernel-latest-1.log
 Each file contains up to 512 KiB of timestamped kernel messages. The files
 alternate after successful writes; choose the newest timestamped content.

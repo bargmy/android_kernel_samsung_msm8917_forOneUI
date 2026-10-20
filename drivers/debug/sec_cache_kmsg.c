@@ -4,6 +4,7 @@
 #include <linux/blkdev.h>
 #include <linux/err.h>
 #include <linux/fs.h>
+#include <linux/fs_struct.h>
 #include <linux/init.h>
 #include <linux/kmsg_dump.h>
 #include <linux/kthread.h>
@@ -21,10 +22,8 @@
 static struct vfsmount *cache_mount(void)
 {
 	static const char * const devices[] = {
-		"/dev/block/bootdevice/by-name/cache",
-		"/dev/block/platform/soc/7824900.sdhci/by-name/cache",
-		"/dev/block/mmcblk0p46",
-		"/dev/mmcblk0p46",
+		/* Relative to this worker's private devtmpfs root. */
+		"/mmcblk0p46",
 	};
 	struct file_system_type *type;
 	struct vfsmount *mnt;
@@ -117,6 +116,9 @@ static int cache_kmsg_thread(void *unused)
 	struct kmsg_dumper dumper = { .active = true };
 	struct path cache;
 	struct vfsmount *mnt = NULL;
+	struct vfsmount *devices;
+	struct file_system_type *devtype;
+	struct path device_root;
 	char *buffer;
 	size_t length;
 	u64 saved_seq = 0;
@@ -126,9 +128,33 @@ static int cache_kmsg_thread(void *unused)
 	int ret;
 	int previous_error = 0;
 
+	/* Do not depend on ueventd making /dev/block nodes, or change init's
+	 * root/mount namespace. devtmpfs creates partition nodes in-kernel.
+	 */
+	ret = unshare_fs_struct();
+	if (ret)
+		return ret;
+	devtype = get_fs_type("devtmpfs");
+	if (!devtype)
+		return -ENODEV;
+	devices = vfs_kern_mount(devtype, MS_NOSUID | MS_NOEXEC,
+				 "cache-kmsg-devices", NULL);
+	put_filesystem(devtype);
+	if (IS_ERR(devices)) {
+		pr_err("cache_kmsg: private devtmpfs failed: %ld\n",
+		       PTR_ERR(devices));
+		return PTR_ERR(devices);
+	}
+	device_root.mnt = devices;
+	device_root.dentry = devices->mnt_root;
+	set_fs_root(current->fs, &device_root);
+	set_fs_pwd(current->fs, &device_root);
+	pr_info("cache_kmsg: kernel-owned device view ready\n");
 	buffer = vzalloc(SNAPSHOT_SIZE);
-	if (!buffer)
+	if (!buffer) {
+		mntput(devices);
 		return -ENOMEM;
+	}
 	while (!kthread_should_stop()) {
 		if (!mnt) {
 			mnt = cache_mount();
@@ -169,6 +195,7 @@ static int cache_kmsg_thread(void *unused)
 	}
 	if (mnt)
 		mntput(mnt);
+	mntput(devices);
 	vfree(buffer);
 	return 0;
 }

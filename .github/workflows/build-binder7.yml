@@ -75,6 +75,7 @@ jobs:
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
           grep -qx 'CONFIG_SEC_CACHE_KMSG=y' out/.config
+          grep -qx 'CONFIG_DEVTMPFS=y' out/.config
 
       - name: Build kernel
         run: |
