@@ -17,6 +17,7 @@
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
 #include <linux/sec_monitor_battery_removal.h>
+#include <linux/sec_cache_reboot.h>
 
 /*
  * this indicates whether you can reboot with ctrl-alt-del: the default is yes
@@ -322,6 +323,7 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	mutex_lock(&reboot_mutex);
 	switch (cmd) {
 	case LINUX_REBOOT_CMD_RESTART:
+		sec_cache_record_reboot(cmd, NULL);
 		kernel_restart(NULL);
 		break;
 
@@ -351,6 +353,7 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		}
 		buffer[sizeof(buffer) - 1] = '\0';
 
+		sec_cache_record_reboot(cmd, buffer);
 		kernel_restart(buffer);
 		break;
 

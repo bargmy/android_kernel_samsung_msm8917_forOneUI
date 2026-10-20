@@ -1,0 +1,26 @@
+Reboot request diagnostic (capture only)
+======================================
+
+With CONFIG_SEC_CACHE_KMSG=y, initial PID-namespace reboot syscalls using
+RESTART or RESTART2 record PID, TGID, task comm, command and target. The hook
+runs after permission/argument validation, before kernel_restart and shutdown.
+It does not change the requested target. Only the first request is captured.
+
+The existing cache worker writes reboot-request-00.log through -15.log using
+exclusive creation and fsync. Existing records are not overwritten. The caller
+waits at most two seconds; this is not a bound on the worker's filesystem I/O.
+Only the worker does filesystem I/O, never a panic notifier or syscall caller.
+
+Back up all existing records and hashes before a test. Only a newly created
+record from that test establishes a captured request. Uptime is not a globally
+unique boot ID. The record is not evidence of a successful hardware reset, nor
+does a task name identify the precise userspace failure or executable.
+
+Missing records are inconclusive: storage/worker initialization, export delays,
+I/O failure, full retention slots or shutdown can prevent a saved record. Direct
+kernel restart calls, panic paths, watchdog/firmware resets and other reboot
+operations are not captured. This diagnostic changes timing by up to two seconds.
+
+No raw partition writes, userdata access, reboot redirection or panic I/O are
+added. Validate a controlled userspace reboot capture before relying on this
+collector; that device test requires separate authorization.

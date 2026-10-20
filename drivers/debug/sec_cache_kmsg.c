@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Diagnostic snapshots from process context, never from the printk/panic path. */
 #include <linux/delay.h>
+#include <linux/completion.h>
 #include <linux/blkdev.h>
 #include <linux/err.h>
 #include <linux/fs.h>
@@ -12,11 +13,43 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/sched.h>
+#include <linux/sec_cache_reboot.h>
+#include <linux/timekeeping.h>
 #include <linux/statfs.h>
 #include <linux/vmalloc.h>
 
 #define SNAPSHOT_SIZE (512 * 1024)
 #define CACHE_RESERVE (8 * 1024 * 1024)
+
+/* One-shot persistent storage: never retain a syscall stack pointer. */
+static atomic_t reboot_claimed = ATOMIC_INIT(0);
+static atomic_t reboot_pending = ATOMIC_INIT(0);
+static DECLARE_COMPLETION(reboot_saved);
+static char reboot_record[512];
+static int reboot_save_result;
+
+void sec_cache_record_reboot(unsigned int command, const char *target)
+{
+	struct timespec now;
+	char comm[TASK_COMM_LEN];
+
+	if (atomic_cmpxchg(&reboot_claimed, 0, 1))
+		return;
+	get_monotonic_boottime(&now);
+	get_task_comm(comm, current);
+	scnprintf(reboot_record, sizeof(reboot_record),
+		  "J2_REBOOT_REQUEST_V1 boottime=%lld.%09ld pid=%d tgid=%d comm=%s command=0x%x target=%s\n",
+		  (long long)now.tv_sec, now.tv_nsec, task_pid_nr(current),
+		  task_tgid_nr(current), comm, command, target ? target : "<NULL>");
+	pr_emerg("%s", reboot_record);
+	smp_wmb();
+	atomic_set(&reboot_pending, 1);
+	if (!wait_for_completion_timeout(&reboot_saved, msecs_to_jiffies(2000)))
+		pr_emerg("cache_kmsg: reboot record save timed out; continuing reboot\n");
+	else
+		pr_emerg("cache_kmsg: reboot record save result=%d\n",
+			 reboot_save_result);
+}
 
 /* J250F cache only. Never probe userdata or guess another partition. */
 static struct vfsmount *cache_mount(void)
@@ -255,6 +288,24 @@ static int cache_kmsg_thread(void *unused)
 			pr_info("cache_kmsg: private cache mount ready\n");
 		}
 		kmsg_dump_rewind(&dumper);
+		if (atomic_read(&reboot_pending)) {
+			char name[48];
+			unsigned int record_slot;
+
+			smp_rmb();
+			ret = -EEXIST;
+			/* Preserve old requests with bounded, exclusive creation. */
+			for (record_slot = 0; record_slot < 16 && ret == -EEXIST;
+			     record_slot++) {
+				snprintf(name, sizeof(name), "reboot-request-%02u.log",
+					 record_slot);
+				ret = cache_write(&cache, name, reboot_record,
+						  strlen(reboot_record), true);
+			}
+			reboot_save_result = ret;
+			atomic_set(&reboot_pending, 0);
+			complete(&reboot_saved);
+		}
 		snapshot_seq = dumper.next_seq;
 		if ((!saved || dumper.next_seq != saved_seq) &&
 		    kmsg_dump_get_buffer(&dumper, true, buffer,
