@@ -288,11 +288,13 @@ static void msm_restart_prepare(const char *cmd)
 {
 	bool need_warm_reset = false;
 	const bool j2_panic_recovery = j2_debug_panic_recovery();
+	bool recovery_requested;
 
 	if (j2_panic_recovery) {
 		pr_emerg("J2DEBUG: panic detected, forcing recovery reboot\n");
 		cmd = "recovery";
 	}
+	recovery_requested = cmd && !strncmp(cmd, "recovery", 8);
 
 #ifndef CONFIG_SEC_DEBUG
 #ifdef CONFIG_MSM_DLOAD_MODE
@@ -309,7 +311,7 @@ static void msm_restart_prepare(const char *cmd)
 	sec_debug_update_dload_mode(restart_mode, in_panic);
 #endif /* CONFIG_SEC_DEBUG */
 	/* Override either debug configuration's Download Mode decision. */
-	if (j2_panic_recovery)
+	if (recovery_requested)
 		set_dload_mode(0);
 
 	if (qpnp_pon_check_hard_reset_stored()) {
@@ -375,8 +377,8 @@ static void msm_restart_prepare(const char *cmd)
 		}
 	}
 
-	/* Keep Qualcomm's recovery magic; Samsung's helper may overwrite it. */
-	if (!j2_panic_recovery)
+	/* Samsung treats recovery as unknown and overwrites Qualcomm's magic. */
+	if (!j2_panic_recovery && !recovery_requested)
 		sec_debug_update_restart_reason(cmd, in_panic);
 
 	flush_cache_all();
