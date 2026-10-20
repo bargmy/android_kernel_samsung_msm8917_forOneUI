@@ -8,6 +8,8 @@ on:
       - 'arch/arm/configs/j2y18lte_defconfig'
       - 'drivers/staging/android/Kconfig'
       - 'fs/ext4/**'
+      - 'drivers/video/**'
+      - 'init/main.c'
 
 permissions:
   contents: read
@@ -73,6 +75,9 @@ jobs:
           grep -qx 'CONFIG_QFMT_V2=y' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
+          for option in VT VT_CONSOLE FRAMEBUFFER_CONSOLE FONT_8x16 FB_MSM_MDSS FB_CFB_FILLRECT FB_CFB_COPYAREA FB_CFB_IMAGEBLIT; do
+            grep -qx "CONFIG_${option}=y" out/.config
+          done
 
       - name: Build kernel
         run: |
@@ -87,6 +92,9 @@ jobs:
         run: |
           set -euxo pipefail
           test -s out/arch/arm/boot/zImage
+          grep -q ' j2fb_fillrect$' out/System.map
+          grep -q ' j2fb_copyarea$' out/System.map
+          grep -q ' j2fb_imageblit$' out/System.map
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_QUOTA=y' out/.config

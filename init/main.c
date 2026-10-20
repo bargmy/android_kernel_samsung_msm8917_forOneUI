@@ -1027,9 +1027,12 @@ static int __ref kernel_init(void *unused)
 	flush_delayed_fput();
 
 	if (ramdisk_execute_command) {
+		pr_emerg("J2DEBUG: ABOUT TO EXECUTE %s\n",
+			 ramdisk_execute_command);
 		ret = run_init_process(ramdisk_execute_command);
 		if (!ret)
 			return 0;
+		pr_emerg("J2DEBUG: EXEC FAILED: %d\n", ret);
 		pr_err("Failed to execute %s (error %d)\n",
 		       ramdisk_execute_command, ret);
 	}

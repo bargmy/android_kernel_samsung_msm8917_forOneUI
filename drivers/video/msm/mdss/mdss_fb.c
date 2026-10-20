@@ -2520,8 +2520,37 @@ static int mdss_fb_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	return rc;
 }
 
+#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+/* Software drawing only; MDSS remains responsible for panel scanout. */
+static void j2fb_fillrect(struct fb_info *info,
+			  const struct fb_fillrect *rect)
+{
+	if (info->screen_base)
+		cfb_fillrect(info, rect);
+}
+
+static void j2fb_copyarea(struct fb_info *info,
+			  const struct fb_copyarea *area)
+{
+	if (info->screen_base)
+		cfb_copyarea(info, area);
+}
+
+static void j2fb_imageblit(struct fb_info *info,
+			   const struct fb_image *image)
+{
+	if (info->screen_base)
+		cfb_imageblit(info, image);
+}
+#endif
+
 static struct fb_ops mdss_fb_ops = {
 	.owner = THIS_MODULE,
+#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+	.fb_fillrect = j2fb_fillrect,
+	.fb_copyarea = j2fb_copyarea,
+	.fb_imageblit = j2fb_imageblit,
+#endif
 	.fb_open = mdss_fb_open,
 	.fb_release = mdss_fb_release,
 	.fb_check_var = mdss_fb_check_var,	/* vinfo check */
