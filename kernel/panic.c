@@ -154,12 +154,13 @@ void panic(const char *fmt, ...)
 	smp_send_stop();
 
 	/*
-	 * Run any panic handlers, including those that might need to
-	 * add information to the kmsg dump output.
+	 * J2 debug: preserve the panic before Samsung's notifier can reset
+	 * the device. This dump intentionally excludes notifier-added output.
 	 */
-	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
-
+	pr_emerg("J2DEBUG: saving panic to pstore before Samsung reset\n");
 	kmsg_dump(KMSG_DUMP_PANIC);
+
+	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
 
 	/*
 	 * If you doubt kdump always works fine in any situation,

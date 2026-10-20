@@ -10,6 +10,7 @@ on:
       - 'fs/ext4/**'
       - 'drivers/video/**'
       - 'init/main.c'
+      - 'kernel/panic.c'
 
 permissions:
   contents: read
