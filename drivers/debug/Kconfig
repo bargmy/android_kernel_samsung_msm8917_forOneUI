@@ -1,16 +1,5 @@
 # When adding new entries keep the list in alphabetical order
 
-config SEC_CACHE_KMSG
-	bool "Periodically save kernel log snapshots to mounted cache"
-	depends on PRINTK && BLOCK && EXT4_FS=y && DEVTMPFS && SEC_J2Y18LTE_PROJECT
-	help
-	  Save alternating, fsynced kernel log snapshots every two seconds to
-	  /cache/kernel-latest-0.log and /cache/kernel-latest-1.log. Requires
-	  a writable ext4 cache with at least 8 MiB spare. A private kernel mount
-	  is attempted independently of Android init. Never formats a filesystem.
-	  Cannot capture failures before the worker/storage is available or do
-	  filesystem I/O safely during a panic. Diagnostic use only.
-
 choice
 	prompt "Version of GAF structure"
 	depends on SEC_DEBUG
