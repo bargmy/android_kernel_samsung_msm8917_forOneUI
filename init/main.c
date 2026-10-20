@@ -1027,6 +1027,12 @@ static int __ref kernel_init(void *unused)
 	flush_delayed_fput();
 
 	if (ramdisk_execute_command) {
+#ifdef CONFIG_SEC_CACHE_KMSG
+		/* Temporary diagnostic window for the cache worker before userspace. */
+		pr_emerg("J2DEBUG: PRE-INIT HOLD BEGIN\n");
+		msleep(8000);
+		pr_emerg("J2DEBUG: PRE-INIT HOLD END\n");
+#endif
 		pr_emerg("J2DEBUG: ABOUT TO EXECUTE %s\n",
 			 ramdisk_execute_command);
 		ret = run_init_process(ramdisk_execute_command);
