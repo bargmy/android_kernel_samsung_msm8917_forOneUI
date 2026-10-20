@@ -57,3 +57,18 @@ Recovery collection (read only):
 The GitHub workflow verifies CONFIG_SEC_CACHE_KMSG=y and compiles the driver
 as part of the normal J250F kernel build. Build artifacts are kernel-only;
 they are not flashable boot images and must preserve the correct ramdisk.
+Previous-boot crash records
+---------------------------
+After obtaining cache, the worker privately mounts pstore and copies known ramoops
+records into /cache/previous-boot-NN-<pstore-name>, before live snapshots. Source
+names follow this tree's fs/pstore/inode.c (console-ramoops has no numeric suffix).
+Compressed dmesg records retain .enc.z and are not interpreted as plain text.
+Each destination is created exclusively, checked as a single-link regular file,
+and fsynced. Existing exports are never overwritten. Retention is bounded to 16
+files per source name and the existing free-space reserve applies. Each record
+is capped at 512 KiB; this device's configured ramoops records are 256 KiB.
+
+This executes in normal process context, never in a panic callback. It cannot
+preserve RAM across loss of power or export if the next kernel fails before the
+cache worker runs. Recovery's empty pstore is not evidence that Android had no
+ramoops records when recovery has no matching ramoops device.

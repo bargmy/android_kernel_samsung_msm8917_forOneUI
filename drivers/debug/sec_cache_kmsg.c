@@ -59,12 +59,11 @@ static struct vfsmount *cache_mount(void)
 	return ERR_PTR(error);
 }
 
-static int cache_snapshot(struct path *cache, const char *buffer, size_t length,
-			 unsigned int slot)
+static int cache_write(struct path *cache, const char *name,
+		       const char *buffer, size_t length, bool exclusive)
 {
 	struct file *file;
 	struct kstatfs stats;
-	char name[48];
 	loff_t position = 0;
 	ssize_t written;
 	int ret;
@@ -81,9 +80,9 @@ static int cache_snapshot(struct path *cache, const char *buffer, size_t length,
 	    (CACHE_RESERVE + SNAPSHOT_SIZE) / stats.f_bsize + 1)
 		return -ENOSPC;
 
-	snprintf(name, sizeof(name), "kernel-latest-%u.log", slot);
 	file = file_open_root(cache->dentry, cache->mnt, name,
-			      O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK, 0600);
+			      O_WRONLY | O_CREAT | O_NOFOLLOW | O_NONBLOCK |
+			      (exclusive ? O_EXCL : 0), 0600);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 	/* Recheck after opening: reject mount races, hardlinks and special files. */
@@ -109,6 +108,88 @@ static int cache_snapshot(struct path *cache, const char *buffer, size_t length,
 close:
 	filp_close(file, NULL);
 	return ret;
+}
+
+static int cache_snapshot(struct path *cache, const char *buffer, size_t length,
+			 unsigned int slot)
+{
+	char name[48];
+
+	snprintf(name, sizeof(name), "kernel-latest-%u.log", slot);
+	return cache_write(cache, name, buffer, length, false);
+}
+
+/* Preserve previous-boot ramoops records on disk without relying on recovery's
+ * kernel having a matching DT node/driver. Never erase a pstore record, overwrite
+ * an older export, or attempt filesystem I/O in panic context.
+ */
+static void cache_export_pstore(struct path *cache, char *buffer)
+{
+	static const char * const names[] = {
+		"console-ramoops", "dmesg-ramoops-0", "dmesg-ramoops-1",
+		"dmesg-ramoops-2", "dmesg-ramoops-3",
+		"dmesg-ramoops-0.enc.z", "dmesg-ramoops-1.enc.z",
+		"dmesg-ramoops-2.enc.z", "dmesg-ramoops-3.enc.z",
+		"pmsg-ramoops-0",
+	};
+	struct file_system_type *type;
+	struct vfsmount *mnt;
+	struct file *source;
+	unsigned int i, slot;
+	loff_t pos;
+	int got, ret;
+	char destination[96];
+
+	type = get_fs_type("pstore");
+	if (!type) {
+		pr_warn("cache_kmsg: pstore filesystem unavailable\n");
+		return;
+	}
+	mnt = vfs_kern_mount(type, MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC,
+			     "cache-kmsg-pstore", NULL);
+	put_filesystem(type);
+	if (IS_ERR(mnt)) {
+		pr_warn("cache_kmsg: pstore mount failed: %ld\n", PTR_ERR(mnt));
+		return;
+	}
+	for (i = 0; i < ARRAY_SIZE(names); i++) {
+		source = file_open_root(mnt->mnt_root, mnt, names[i],
+					O_RDONLY | O_NOFOLLOW | O_NONBLOCK, 0);
+		if (IS_ERR(source)) {
+			if (PTR_ERR(source) != -ENOENT)
+				pr_warn("cache_kmsg: pstore open %s: %ld\n",
+					names[i], PTR_ERR(source));
+			continue;
+		}
+		pos = 0;
+		while (pos < SNAPSHOT_SIZE) {
+			got = kernel_read(source, pos, buffer + pos,
+					  SNAPSHOT_SIZE - pos);
+			if (got <= 0)
+				break;
+			pos += got;
+		}
+		filp_close(source, NULL);
+		if (got < 0 || !pos) {
+			pr_warn("cache_kmsg: pstore read %s: %d, bytes=%lld\n",
+				names[i], got, (long long)pos);
+			continue;
+		}
+		/* Bounded retention: at most 16 exports per record name. */
+		ret = -EEXIST;
+		for (slot = 0; slot < 16 && ret == -EEXIST; slot++) {
+			snprintf(destination, sizeof(destination),
+				 "previous-boot-%02u-%s", slot, names[i]);
+			ret = cache_write(cache, destination, buffer, pos, true);
+		}
+		if (ret)
+			pr_warn("cache_kmsg: pstore export %s failed: %d\n",
+				names[i], ret);
+		else
+			pr_info("cache_kmsg: pstore saved %s (%lld bytes)\n",
+				destination, (long long)pos);
+	}
+	mntput(mnt);
 }
 
 static int cache_kmsg_thread(void *unused)
@@ -171,6 +252,7 @@ static int cache_kmsg_thread(void *unused)
 			cache.mnt = mnt;
 			cache.dentry = mnt->mnt_root;
 			pr_info("cache_kmsg: private cache mount ready\n");
+			cache_export_pstore(&cache, buffer);
 		}
 		kmsg_dump_rewind(&dumper);
 		snapshot_seq = dumper.next_seq;
