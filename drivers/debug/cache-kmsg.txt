@@ -1,0 +1,41 @@
+Cache kernel log snapshots (CONFIG_SEC_CACHE_KMSG)
+================================================
+
+The built-in cache_kmsg thread takes a snapshot of the latest printk records
+every two seconds, but writes only when the printk sequence has changed.
+It starts at late_initcall, independently of Android services and adbd.
+
+Output: /cache/kernel-latest-0.log and /cache/kernel-latest-1.log
+Each file contains up to 512 KiB of timestamped kernel messages. The files
+alternate after successful writes; choose the newest timestamped content.
+The other slot is not touched while a snapshot is being written. A failed
+or interrupted write can leave that slot incomplete. A successful write is
+truncated to the snapshot length and fsynced before switching slots.
+
+The logger requires /cache to be an already mounted writable ext4 filesystem
+root, with at least 8 MiB plus one snapshot available to the caller. It never
+mounts, formats, or writes raw block devices. Unavailable/readonly/full cache
+is retried silently. Output files are created mode 0600. Symlinks, hardlinks,
+nonregular files, and a changed mount are rejected before writing file data.
+Existing files are reused; nothing else in cache is deleted.
+
+Limitations
+-----------
+* A failure before cache is mounted cannot be saved by this driver.
+* Panics/hangs/power loss can lose records since the most recent fsync.
+  There is deliberately no filesystem-writing panic callback: filesystem
+  and storage locks may already be held by the failing CPU.
+* A filesystem/storage failure may prevent writing entirely. SELinux can
+  also deny the thread access; this driver does not bypass policy.
+* This is a diagnostic feature and adds flash writes. Disable it after
+  diagnosing the port. It is not a replacement for ramoops/last_kmsg.
+* New boots eventually replace both slots. Recover logs before repeatedly
+  booting another kernel with this feature enabled.
+
+Recovery collection (read only):
+  adb pull /cache/kernel-latest-0.log
+  adb pull /cache/kernel-latest-1.log
+
+The GitHub workflow verifies CONFIG_SEC_CACHE_KMSG=y and compiles the driver
+as part of the normal J250F kernel build. Build artifacts are kernel-only;
+they are not flashable boot images and must preserve the correct ramdisk.

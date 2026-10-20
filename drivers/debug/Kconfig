@@ -1,5 +1,15 @@
 # When adding new entries keep the list in alphabetical order
 
+config SEC_CACHE_KMSG
+	bool "Periodically save kernel log snapshots to mounted cache"
+	depends on PRINTK && BLOCK
+	help
+	  Save alternating, fsynced kernel log snapshots every two seconds to
+	  /cache/kernel-latest-0.log and /cache/kernel-latest-1.log. Requires
+	  an already mounted writable ext4 cache with at least 8 MiB spare.
+	  Never mounts or formats a filesystem. Cannot capture a failure before
+	  cache is mounted, nor safely perform filesystem I/O during a panic.
+
 choice
 	prompt "Version of GAF structure"
 	depends on SEC_DEBUG
