@@ -11,6 +11,7 @@ on:
       - 'drivers/video/**'
       - 'init/main.c'
       - 'kernel/panic.c'
+      - 'drivers/power/reset/msm-poweroff.c'
 
 permissions:
   contents: read

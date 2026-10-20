@@ -221,6 +221,19 @@ static bool get_dload_mode(void)
 }
 #endif
 
+/* Temporary J2 diagnostic behavior, exclusive to the screen-debug branch.
+ * Ordinary restart requests are unchanged; only notifier-detected panics
+ * request warm recovery instead of Download Mode/watchdog bite.
+ */
+static bool j2_debug_panic_recovery(void)
+{
+#if defined(CONFIG_SEC_J2Y18LTE_PROJECT) && defined(CONFIG_MSM_DLOAD_MODE)
+	return !!in_panic;
+#else
+	return false;
+#endif
+}
+
 static void scm_disable_sdi(void)
 {
 	int ret;
@@ -274,6 +287,12 @@ static void halt_spmi_pmic_arbiter(void)
 static void msm_restart_prepare(const char *cmd)
 {
 	bool need_warm_reset = false;
+	const bool j2_panic_recovery = j2_debug_panic_recovery();
+
+	if (j2_panic_recovery) {
+		pr_emerg("J2DEBUG: panic detected, forcing recovery reboot\n");
+		cmd = "recovery";
+	}
 
 #ifndef CONFIG_SEC_DEBUG
 #ifdef CONFIG_MSM_DLOAD_MODE
@@ -289,6 +308,9 @@ static void msm_restart_prepare(const char *cmd)
 #else /* CONFIG_SEC_DEBUG */
 	sec_debug_update_dload_mode(restart_mode, in_panic);
 #endif /* CONFIG_SEC_DEBUG */
+	/* Override either debug configuration's Download Mode decision. */
+	if (j2_panic_recovery)
+		set_dload_mode(0);
 
 	if (qpnp_pon_check_hard_reset_stored()) {
 		/* Set warm reset as true when device is in dload mode */
@@ -301,6 +323,9 @@ static void msm_restart_prepare(const char *cmd)
 				((cmd != NULL && cmd[0] != '\0') &&
 				strcmp(cmd, "userrequested")));
 	}
+
+	if (j2_panic_recovery)
+		need_warm_reset = true;
 
 	/* Hard reset the PMIC unless memory contents must be maintained. */
 	if (need_warm_reset) {
@@ -350,7 +375,9 @@ static void msm_restart_prepare(const char *cmd)
 		}
 	}
 
-	sec_debug_update_restart_reason(cmd, in_panic);
+	/* Keep Qualcomm's recovery magic; Samsung's helper may overwrite it. */
+	if (!j2_panic_recovery)
+		sec_debug_update_restart_reason(cmd, in_panic);
 
 	flush_cache_all();
 
@@ -398,7 +425,8 @@ static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 	 * device will take the usual restart path.
 	 */
 
-	if (WDOG_BITE_ON_PANIC && in_panic) {
+	if (WDOG_BITE_ON_PANIC && in_panic &&
+	    !j2_debug_panic_recovery()) {
 		printk(KERN_NOTICE " WDOG_BITE_ON_PANIC : %d, in_panic : %d\n", WDOG_BITE_ON_PANIC, in_panic);
 		msm_trigger_wdog_bite();
 	}
