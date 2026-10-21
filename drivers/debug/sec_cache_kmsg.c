@@ -213,7 +213,9 @@ static int cache_marker_block_readback(struct path *cache, const char *name,
 		diagnostic_boot_id, bdevname(bdev, device_name),
 		MAJOR(bdev->bd_dev), MINOR(bdev->bd_dev),
 		(long long)i_size_read(bdev->bd_inode), sb->s_uuid, blocksize);
+	down_read(&sb->s_umount);
 	ret = sync_filesystem(sb);
+	up_read(&sb->s_umount);
 	pr_info("cache_kmsg: J2RB1 sync_filesystem=%d\n", ret);
 	if (ret)
 		return ret;
