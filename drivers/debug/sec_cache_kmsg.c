@@ -408,8 +408,9 @@ static int cache_kmsg_thread(void *unused)
 		}
 		kmsg_dump_rewind(&dumper);
 		if (atomic_read(&reboot_pending)) {
-			char name[48];
+			char name[64];
 			unsigned int record_slot;
+			int snapshot_ret = -ENODATA;
 
 			smp_rmb();
 			ret = -EEXIST;
@@ -425,6 +426,28 @@ static int cache_kmsg_thread(void *unused)
 				ret = cache_marker_block_readback(&cache, name,
 						 reboot_record, strlen(reboot_record));
 			reboot_save_result = ret;
+			/* Capture the fatal message immediately, not on the next periodic
+			 * iteration. Keep it separate from rotating/stale snapshots and
+			 * identify it with this boot's ID. All I/O stays in this worker.
+			 */
+			kmsg_dump_rewind(&dumper);
+			if (kmsg_dump_get_buffer(&dumper, true, buffer,
+						 SNAPSHOT_SIZE, &length) && length) {
+				snprintf(name, sizeof(name), "reboot-kmsg-%s.log",
+					 diagnostic_boot_id);
+				snapshot_ret = cache_write(&cache, name, buffer, length, true);
+				if (!snapshot_ret) {
+					down_read(&cache.dentry->d_sb->s_umount);
+					snapshot_ret = sync_filesystem(cache.dentry->d_sb);
+					up_read(&cache.dentry->d_sb->s_umount);
+					if (!snapshot_ret)
+						snapshot_ret = blkdev_issue_flush(
+							cache.dentry->d_sb->s_bdev,
+							GFP_KERNEL, NULL);
+				}
+			}
+			pr_emerg("cache_kmsg: reboot snapshot boot=%s result=%d request_result=%d\n",
+				 diagnostic_boot_id, snapshot_ret, reboot_save_result);
 			atomic_set(&reboot_pending, 0);
 			complete(&reboot_saved);
 		}
