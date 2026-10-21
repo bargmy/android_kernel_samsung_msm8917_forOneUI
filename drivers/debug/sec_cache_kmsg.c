@@ -3,6 +3,8 @@
 #include <linux/delay.h>
 #include <linux/completion.h>
 #include <linux/blkdev.h>
+#include <linux/bio.h>
+#include <linux/highmem.h>
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/fs_struct.h>
@@ -186,6 +188,86 @@ static int cache_snapshot(struct path *cache, const char *buffer, size_t length,
 	return cache_write(cache, name, buffer, length, false);
 }
 
+/* Process-context positive control. READ bio bypasses the filesystem and block
+ * page caches. It does not bypass an eMMC device's internal volatile cache.
+ * Never write raw sectors, invalidate live pages, or change mount options.
+ */
+static int cache_marker_block_readback(struct path *cache, const char *name,
+				       const char *expected, size_t length)
+{
+	struct super_block *sb = cache->dentry->d_sb;
+	struct block_device *bdev = sb->s_bdev;
+	struct file *file;
+	struct page *page;
+	struct bio *bio;
+	sector_t block, sector;
+	char device_name[BDEVNAME_SIZE];
+	void *data;
+	unsigned int blocksize = sb->s_blocksize;
+	int ret;
+
+	if (!bdev || blocksize > PAGE_SIZE || blocksize < 512 ||
+	    length > blocksize || i_size_read(bdev->bd_inode) != 209715200)
+		return -EINVAL;
+	pr_info("cache_kmsg: J2RB1 boot=%s device=%s dev=%u:%u bytes=%lld uuid=%pU blocksize=%u\n",
+		diagnostic_boot_id, bdevname(bdev, device_name),
+		MAJOR(bdev->bd_dev), MINOR(bdev->bd_dev),
+		(long long)i_size_read(bdev->bd_inode), sb->s_uuid, blocksize);
+	ret = sync_filesystem(sb);
+	pr_info("cache_kmsg: J2RB1 sync_filesystem=%d\n", ret);
+	if (ret)
+		return ret;
+	ret = blkdev_issue_flush(bdev, GFP_KERNEL, NULL);
+	pr_info("cache_kmsg: J2RB1 device_flush=%d\n", ret);
+	if (ret)
+		return ret;
+	file = file_open_root(cache->dentry, cache->mnt, name,
+			      O_RDONLY | O_NOFOLLOW | O_NONBLOCK, 0);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
+	if (!S_ISREG(file_inode(file)->i_mode) ||
+	    i_size_read(file_inode(file)) != length ||
+	    file->f_path.mnt != cache->mnt ||
+	    file->f_path.dentry->d_parent != cache->dentry) {
+		filp_close(file, NULL);
+		return -EINVAL;
+	}
+	block = bmap(file_inode(file), 0);
+	filp_close(file, NULL);
+	if (!block)
+		return -ENXIO;
+	sector = block * (blocksize >> 9);
+	if (sector + (blocksize >> 9) > (i_size_read(bdev->bd_inode) >> 9))
+		return -EINVAL;
+	page = alloc_page(GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
+	bio = bio_alloc(GFP_KERNEL, 1);
+	if (!bio) {
+		__free_page(page);
+		return -ENOMEM;
+	}
+	bio->bi_bdev = bdev;
+	bio->bi_iter.bi_sector = sector;
+	if (bio_add_page(bio, page, blocksize, 0) != blocksize) {
+		ret = -EIO;
+		goto release;
+	}
+	ret = submit_bio_wait(READ | REQ_SYNC, bio);
+	if (!ret) {
+		data = kmap(page);
+		if (memcmp(data, expected, length))
+			ret = -EILSEQ;
+		kunmap(page);
+	}
+	pr_info("cache_kmsg: J2RB1 boot=%s file=%s partition_sector=%llu bytes=%zu direct_read_compare=%d\n",
+		diagnostic_boot_id, name, (unsigned long long)sector, length, ret);
+release:
+	bio_put(bio);
+	__free_page(page);
+	return ret;
+}
+
 /* Preserve previous-boot ramoops records on disk without relying on recovery's
  * kernel having a matching DT node/driver. Never erase a pstore record, overwrite
  * an older export, or attempt filesystem I/O in panic context.
@@ -274,6 +356,7 @@ static int cache_kmsg_thread(void *unused)
 	unsigned int slot = 0;
 	bool saved = false;
 	bool exported = false;
+	bool readiness_attempted = false;
 	int ret;
 	int previous_error = 0;
 
@@ -336,6 +419,9 @@ static int cache_kmsg_thread(void *unused)
 				ret = cache_write(&cache, name, reboot_record,
 						  strlen(reboot_record), true);
 			}
+			if (!ret)
+				ret = cache_marker_block_readback(&cache, name,
+						 reboot_record, strlen(reboot_record));
 			reboot_save_result = ret;
 			atomic_set(&reboot_pending, 0);
 			complete(&reboot_saved);
@@ -363,15 +449,18 @@ static int cache_kmsg_thread(void *unused)
 			exported = true;
 			cache_export_pstore(&cache, buffer);
 		}
-		if (saved && !atomic_read(&diagnostic_ready)) {
+		if (saved && !readiness_attempted) {
 			char name[64], status[96];
 			int length;
 
+			readiness_attempted = true;
 			snprintf(name, sizeof(name), "probe-ready-%s.log",
 				 diagnostic_boot_id);
 			length = scnprintf(status, sizeof(status),
 					   "J2PC1 ready=1 boot=%s\n", diagnostic_boot_id);
 			ret = cache_write(&cache, name, status, length, true);
+			if (!ret)
+				ret = cache_marker_block_readback(&cache, name, status, length);
 			if (!ret) {
 				atomic_set(&diagnostic_ready, 1);
 				pr_info("cache_kmsg: J2PC1 durable readiness boot=%s\n",

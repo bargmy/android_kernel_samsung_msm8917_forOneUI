@@ -1,6 +1,17 @@
 Reboot request diagnostic (capture only)
 ======================================
 
+J2RB1 block-readback revision: readiness and reboot records additionally run
+sync_filesystem, a block-device flush, bmap of file block zero, and a synchronous
+READ bio into a fresh page. The first file bytes must match exactly. Log entries
+report cache device, major/minor, filesystem UUID, partition-relative sector,
+byte length and each operation's result. No raw writes or page invalidation.
+The direct read bypasses host page caches, NOT the eMMC internal cache; only a
+post-reboot raw read of that sector can establish persistence across that reset.
+Readiness is attempted once and withheld on failure. The existing probe stays
+alive if readiness never appears. Reboot caller wait remains two seconds, which
+does not bound storage I/O; a timeout must not be reported as verification.
+
 J2PC1 positive-control revision: records include a random per-boot identifier.
 cache_write now fsyncs the parent directory after file fsync. A read-only
 /proc/j2_cache_ready returns J2PC1 ready=1 only after a successful snapshot,
