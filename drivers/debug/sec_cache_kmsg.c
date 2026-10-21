@@ -12,6 +12,8 @@
 #include <linux/magic.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
+#include <linux/proc_fs.h>
+#include <linux/random.h>
 #include <linux/sched.h>
 #include <linux/sec_cache_reboot.h>
 #include <linux/timekeeping.h>
@@ -27,6 +29,24 @@ static atomic_t reboot_pending = ATOMIC_INIT(0);
 static DECLARE_COMPLETION(reboot_saved);
 static char reboot_record[512];
 static int reboot_save_result;
+static char diagnostic_boot_id[37];
+static atomic_t diagnostic_ready = ATOMIC_INIT(0);
+
+static ssize_t cache_ready_read(struct file *file, char __user *buffer,
+			       size_t count, loff_t *position)
+{
+	char status[96];
+	int length;
+
+	length = scnprintf(status, sizeof(status), "J2PC1 ready=%d boot=%s\n",
+			   atomic_read(&diagnostic_ready), diagnostic_boot_id);
+	return simple_read_from_buffer(buffer, count, position, status, length);
+}
+
+static const struct file_operations cache_ready_fops = {
+	.read = cache_ready_read,
+	.llseek = default_llseek,
+};
 
 void sec_cache_record_reboot(unsigned int command, const char *target)
 {
@@ -38,8 +58,8 @@ void sec_cache_record_reboot(unsigned int command, const char *target)
 	get_monotonic_boottime(&now);
 	get_task_comm(comm, current);
 	scnprintf(reboot_record, sizeof(reboot_record),
-		  "J2_REBOOT_REQUEST_V1 boottime=%lld.%09ld pid=%d tgid=%d comm=%s command=0x%x target=%s\n",
-		  (long long)now.tv_sec, now.tv_nsec, task_pid_nr(current),
+		  "J2PC1 boot=%s boottime=%lld.%09ld pid=%d tgid=%d comm=%s command=0x%x target=%s\n",
+		  diagnostic_boot_id, (long long)now.tv_sec, now.tv_nsec, task_pid_nr(current),
 		  task_tgid_nr(current), comm, command, target ? target : "<NULL>");
 	pr_emerg("%s", reboot_record);
 	smp_wmb();
@@ -95,7 +115,7 @@ static struct vfsmount *cache_mount(void)
 static int cache_write(struct path *cache, const char *name,
 		       const char *buffer, size_t length, bool exclusive)
 {
-	struct file *file;
+	struct file *file, *directory;
 	struct kstatfs stats;
 	loff_t position = 0;
 	ssize_t written;
@@ -138,6 +158,20 @@ static int cache_write(struct path *cache, const char *name,
 	ret = vfs_truncate(&file->f_path, length);
 	if (!ret)
 		ret = vfs_fsync(file, 0);
+	if (!ret) {
+		/* A new file's name needs directory durability as well as data. */
+		directory = file_open_root(cache->dentry, cache->mnt, ".",
+					   O_RDONLY | O_DIRECTORY, 0);
+		if (IS_ERR(directory))
+			ret = PTR_ERR(directory);
+		else {
+			ret = vfs_fsync(directory, 0);
+			filp_close(directory, NULL);
+		}
+		if (ret)
+			pr_err("cache_kmsg: parent directory fsync %s failed: %d\n",
+			       name, ret);
+	}
 close:
 	filp_close(file, NULL);
 	return ret;
@@ -324,10 +358,27 @@ static int cache_kmsg_thread(void *unused)
 				previous_error = ret;
 			}
 		}
-		/* Never delay the first live snapshot behind old-record export. */
+		/* Complete old-record export before advertising probe readiness. */
 		if (saved && !exported) {
 			exported = true;
 			cache_export_pstore(&cache, buffer);
+		}
+		if (saved && !atomic_read(&diagnostic_ready)) {
+			char name[64], status[96];
+			int length;
+
+			snprintf(name, sizeof(name), "probe-ready-%s.log",
+				 diagnostic_boot_id);
+			length = scnprintf(status, sizeof(status),
+					   "J2PC1 ready=1 boot=%s\n", diagnostic_boot_id);
+			ret = cache_write(&cache, name, status, length, true);
+			if (!ret) {
+				atomic_set(&diagnostic_ready, 1);
+				pr_info("cache_kmsg: J2PC1 durable readiness boot=%s\n",
+					diagnostic_boot_id);
+			} else {
+				pr_err("cache_kmsg: readiness write failed: %d\n", ret);
+			}
 		}
 		msleep_interruptible(500);
 	}
@@ -341,6 +392,12 @@ static int cache_kmsg_thread(void *unused)
 static int __init cache_kmsg_init(void)
 {
 	struct task_struct *task;
+	u8 boot_id[16];
+
+	get_random_bytes(boot_id, sizeof(boot_id));
+	snprintf(diagnostic_boot_id, sizeof(diagnostic_boot_id), "%pU", boot_id);
+	if (!proc_create("j2_cache_ready", 0400, NULL, &cache_ready_fops))
+		return -ENOMEM;
 
 	task = kthread_run(cache_kmsg_thread, NULL, "cache_kmsg");
 	return IS_ERR(task) ? PTR_ERR(task) : 0;

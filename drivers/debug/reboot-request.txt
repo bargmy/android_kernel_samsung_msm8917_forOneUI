@@ -1,6 +1,13 @@
 Reboot request diagnostic (capture only)
 ======================================
 
+J2PC1 positive-control revision: records include a random per-boot identifier.
+cache_write now fsyncs the parent directory after file fsync. A read-only
+/proc/j2_cache_ready returns J2PC1 ready=1 only after a successful snapshot,
+previous-record export attempt, and exclusive probe-ready-<boot-id>.log write
+including directory fsync. Readiness is not a guarantee of future I/O success.
+No warm/hard reset selection changes are made in this revision.
+
 With CONFIG_SEC_CACHE_KMSG=y, initial PID-namespace reboot syscalls using
 RESTART or RESTART2 record PID, TGID, task comm, command and target. The hook
 runs after permission/argument validation, before kernel_restart and shutdown.
