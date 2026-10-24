@@ -208,3 +208,6 @@ obj-y += ccic/
 # FIVE TEE driver
 obj-$(CONFIG_FIVE_TEE_DRIVER)	+= five/
 obj-$(CONFIG_ICD)		+= icdrv/
+
+# KernelSU Next
+obj-$(CONFIG_KSU)		+= kernelsu/
