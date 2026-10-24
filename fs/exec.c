@@ -1744,12 +1744,29 @@ out_ret:
 	return retval;
 }
 
+#ifdef CONFIG_KSU
+/*
+ * KernelSU Next manual hook (pinned legacy revision, commit 0b17f242).
+ * Signature as declared in drivers/kernelsu/core/init.c.
+ */
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+			       void *argv, void *envp, int *flags);
+#endif
+
 int do_execve(struct filename *filename,
 	const char __user *const __user *__argv,
 	const char __user *const __user *__envp)
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
+
+#ifdef CONFIG_KSU
+	int ksu_fd = AT_FDCWD;
+	int ksu_flags = 0;
+
+	ksu_handle_execveat(&ksu_fd, &filename, &argv, &envp, &ksu_flags);
+#endif
+
 	return do_execve_common(filename, argv, envp);
 }
 

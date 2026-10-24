@@ -4835,3 +4835,8 @@ CONFIG_QMI_ENCDEC=y
 # CONFIG_QMI_ENCDEC_DEBUG is not set
 # CONFIG_VIRTUALIZATION is not set
 # CONFIG_SEC_J2ESSLTE_PROJECT is not set
+
+# KernelSU Next (manual hook mode; CONFIG_KPROBES stays disabled)
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
+

@@ -559,10 +559,22 @@ static inline void file_pos_write(struct file *file, loff_t pos)
 	file->f_pos = pos;
 }
 
+#ifdef CONFIG_KSU
+/*
+ * KernelSU Next manual hook (pinned legacy revision, commit 0b17f242).
+ * Signature as defined in drivers/kernelsu/runtime/ksud_integration.c.
+ */
+extern void ksu_handle_sys_read(unsigned int fd);
+#endif
+
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	struct fd f = fdget_pos(fd);
 	ssize_t ret = -EBADF;
+
+#ifdef CONFIG_KSU
+	ksu_handle_sys_read(fd);
+#endif
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);
