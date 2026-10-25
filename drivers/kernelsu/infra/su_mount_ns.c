@@ -9,6 +9,7 @@
 #include <linux/proc_ns.h>
 #include <linux/pid.h>
 #include <linux/version.h>
+#include <linux/uaccess.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
 #include <linux/sched/task.h>
 #endif
@@ -26,12 +27,22 @@
 #include "infra/su_mount_ns.h"
 #include "util.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
 extern int path_mount(const char *dev_name, struct path *path,
                       const char *type_page, unsigned long flags,
                       void *data_page);
+#else
+/* path_mount() arrived around 5.3; on 3.18 do_mount() handles the same
+ * propagation flags via do_change_type(). do_mount() resolves dir_name
+ * through user_path(), so the caller must hold KERNEL_DS. */
+extern long do_mount(const char *dev_name, const char __user *dir_name,
+                     const char *type_page, unsigned long flags,
+                     void *data_page);
+#endif
 
 // global mode , need CAP_SYS_ADMIN and CAP_SYS_CHROOT to perform setns
 static void ksu_mnt_ns_global(void)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 {
     // save current working directory as absolute path before setns
     char *pwd_path = NULL;
@@ -121,6 +132,16 @@ out:
     kfree(pwd_buf);
 }
 
+#else /* < 3.19 */
+{
+    /* No nsfs: on kernels < 3.19 the /proc/<pid>/ns/* links cannot be
+     * opened as files, so there is no fd to hand to setns(). Global
+     * escape is a no-op; the daemon already runs in vendor init's
+     * mount namespace on this platform. */
+    pr_warn("mount ns: GLOBAL escape is unavailable on < 3.19, skipped\n");
+}
+#endif
+
 // individual mode , need CAP_SYS_ADMIN to perform unshare and remount
 static void ksu_mnt_ns_individual(void)
 {
@@ -131,10 +152,18 @@ static void ksu_mnt_ns_individual(void)
     }
 
     // make root mount private
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
     struct path root_path;
     get_fs_root(current->fs, &root_path);
     int pm_ret = path_mount(NULL, &root_path, NULL, MS_PRIVATE | MS_REC, NULL);
     path_put(&root_path);
+#else
+    mm_segment_t old_fs = get_fs();
+    set_fs(KERNEL_DS);
+    int pm_ret = (int)do_mount(NULL, (const char __user *)"/", NULL,
+                               MS_PRIVATE | MS_REC, NULL);
+    set_fs(old_fs);
+#endif
 
     if (pm_ret < 0) {
         pr_err("failed to make root private, err: %d\n", pm_ret);

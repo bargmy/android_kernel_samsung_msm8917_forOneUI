@@ -4,6 +4,9 @@
 #include <linux/static_key.h>
 #include <linux/types.h>
 
+/* 3.1x compat: DEFINE_STATIC_KEY_FALSE / static_branch_unlikely / etc. */
+#include "compat/kernel_compat.h"
+
 #include "feature/shell_su_adb_only.h"
 #include "policy/feature.h"
 #include "selinux/selinux.h"

@@ -74,7 +74,9 @@ void on_post_fs_data(void)
 	ksu_selinux_hide_handle_post_fs_data();
 }
 
+#ifdef KSU_HAS_EXT4_UNREGISTER_SYSFS
 extern void ext4_unregister_sysfs(struct super_block *sb);
+#endif
 
 int nuke_ext4_sysfs(const char *mnt)
 {
@@ -93,9 +95,15 @@ int nuke_ext4_sysfs(const char *mnt)
 		return -EINVAL;
 	}
 
+#ifdef KSU_HAS_EXT4_UNREGISTER_SYSFS
 	ext4_unregister_sysfs(sb);
 	path_put(&path);
 	return 0;
+#else
+	/* This ext4 sysfs interface is unavailable in the 3.18 base kernel. */
+	path_put(&path);
+	return -EOPNOTSUPP;
+#endif
 }
 
 void on_module_mounted(void)

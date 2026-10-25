@@ -68,6 +68,43 @@
 #define SYS_FSTAT_SYMBOL "sys_newfstat"
 #endif
 
+#elif defined(__arm__)
+
+/*
+ * ARM32 (CONFIG_ARM): struct pt_regs carries the register frame in uregs[]
+ * (arch/arm/include/asm/ptrace.h). These mappings are only referenced by the
+ * kprobe/syscall-table hook backends; manual hook mode does not rely on them,
+ * but the header must still compile on arm32.
+ */
+#define __PT_PARM1_REG uregs[0]		/* ARM_r0 */
+#define __PT_PARM2_REG uregs[1]		/* ARM_r1 */
+#define __PT_PARM3_REG uregs[2]		/* ARM_r2 */
+#define __PT_SYSCALL_PARM4_REG uregs[3]	/* ARM_r3 (scratch) */
+#define __PT_CCALL_PARM4_REG uregs[3]	/* ARM_r3 */
+#define __PT_PARM5_REG uregs[4]		/* ARM_r4 */
+#define __PT_PARM6_REG uregs[5]		/* ARM_r5 */
+#define __PT_RET_REG uregs[15]		/* ARM_pc */
+#define __PT_FP_REG uregs[11]		/* ARM_fp (works only with CONFIG_FRAME_POINTER) */
+#define __PT_RC_REG uregs[0]		/* ARM_r0 */
+#define __PT_SP_REG uregs[13]		/* ARM_sp */
+#define __PT_IP_REG uregs[14]		/* ARM_lr */
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 16, 0)
+#define REBOOT_SYMBOL "__arm_sys_reboot"
+#define SYS_READ_SYMBOL "__arm_sys_read"
+#define SYS_EXECVE_SYMBOL "__arm_sys_execve"
+#define SYS_EXECVEAT_SYMBOL "__arm_sys_execveat"
+#define SYS_SETNS_SYMBOL __arm_sys_setns
+#define SYS_FSTAT_SYMBOL "__arm_sys_newfstat"
+#else
+#define REBOOT_SYMBOL "sys_reboot"
+#define SYS_READ_SYMBOL "sys_read"
+#define SYS_EXECVE_SYMBOL "sys_execve"
+#define SYS_EXECVEAT_SYMBOL "sys_execveat"
+#define SYS_SETNS_SYMBOL sys_setns
+#define SYS_FSTAT_SYMBOL "sys_newfstat"
+#endif
+
 #else
 #error "Unsupported arch"
 #endif

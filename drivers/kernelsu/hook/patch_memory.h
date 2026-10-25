@@ -20,7 +20,9 @@
 #elif __x86_64__
 #include <asm/ptrace.h>
 #else
-#error "Unsupported arch"
+/* 32-bit targets: text patching (syscall-table backend) is not used on
+ * platforms driven by manual hooks; prototypes-only compile is intended,
+ * the backend object is not built below 4.17 anyway. */
 #endif
 
 #define KSU_PATCH_TEXT_FLUSH_DCACHE 1

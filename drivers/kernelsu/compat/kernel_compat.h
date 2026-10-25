@@ -4,6 +4,10 @@
 #include <linux/fs.h>
 #include <linux/version.h>
 #include <linux/task_work.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
+/* 3.1x: vmalloc/vfree/vzalloc are only declared via <linux/vmalloc.h> */
+#include <linux/vmalloc.h>
+#endif
 #include "ss/policydb.h"
 #include "linux/key.h"
 
@@ -58,6 +62,77 @@ static inline long ksu_copy_from_user_retry(void *to,
 	return copy_from_user(to, from, count);
 }
 
+/*
+ * untagged_addr() is an ARM64 ABI tag abstraction; on 3.1x there are no
+ * tagged pointers.
+ */
+#ifndef untagged_addr
+#define untagged_addr(addr) ((unsigned long)(addr))
+#endif
+
+/*
+ * d_is_reg() arrived with the dentry flag rework (3.20); derive it from the
+ * dentry inode on older trees.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 20, 0)
+#include <linux/dcache.h>
+#include <linux/fs.h>
+static inline bool d_is_reg(const struct dentry *dentry)
+{
+	return d_is_positive(dentry) && S_ISREG(dentry->d_inode->i_mode);
+}
+#endif
+
+/*
+ * ALIGN_DOWN() arrived in 4.19.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+#include <linux/kernel.h>
+#define ALIGN_DOWN(x, a) __ALIGN_KERNEL((x) - ((a) - 1), (a))
+#endif
+
+/*
+ * static-key convenience API (DEFINE_STATIC_KEY_FALSE / static_branch_unlikely
+ * / static_key_enable / static_key_disable) post-dates 3.18; emulate it on top
+ * of the legacy struct static_key (atomic enabled counter) API.
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+#include <linux/jump_label.h>
+
+#define DEFINE_STATIC_KEY_FALSE(name)                                          \
+	struct {                                                               \
+		struct static_key key;                                         \
+	} name = { .key = STATIC_KEY_INIT_FALSE }
+
+static inline bool ksu_static_key_enabled(void *p)
+{
+	return static_key_count((struct static_key *)p) > 0;
+}
+
+static inline bool ksu_static_branch_unlikely(void *p)
+{
+	return static_key_true((struct static_key *)p);
+}
+
+static inline void ksu_static_key_enable(void *p)
+{
+	if (!ksu_static_key_enabled(p))
+		static_key_slow_inc((struct static_key *)p);
+}
+
+static inline void ksu_static_key_disable(void *p)
+{
+	if (ksu_static_key_enabled(p))
+		static_key_slow_dec((struct static_key *)p);
+}
+
+#define static_key_enabled(x)      ksu_static_key_enabled((void *)(x))
+#define static_branch_unlikely(x)  ksu_static_branch_unlikely((void *)(x))
+#define static_key_enable(x)       ksu_static_key_enable((void *)(x))
+#define static_key_disable(x)      ksu_static_key_disable((void *)(x))
+#endif /* < 4.6 */
+
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 extern void *ksu_compat_kvrealloc(const void *p, size_t oldsize, size_t newsize,
 				  gfp_t flags);
@@ -84,6 +159,27 @@ static inline void ksu_kvfree(const void *buf)
 #define kvmalloc ksu_kvmalloc
 #define kvfree ksu_kvfree
 #endif
+
+/*
+ * kvcalloc()/kvmalloc_array() post-date 3.18 (kvcalloc: 4.18,
+ * kvmalloc_array: 4.12); emulate them with the kvmalloc family above (the
+ * kvmalloc name maps to ksu_kvmalloc on kernels lacking it).
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+#include <linux/kallsyms.h>
+static inline void *ksu_compat_kvcalloc(size_t n, size_t size, gfp_t flags)
+{
+	if (size == 0 || n == 0)
+		return NULL;
+	if (n > (UINT_MAX / size))
+		return NULL;
+	return kvmalloc(n * size, flags);
+}
+#define kvcalloc(n, s, f)       ksu_compat_kvcalloc((n), (s), (f))
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
+#define kvmalloc_array(n, s, f) ksu_compat_kvcalloc((n), (s), (f))
+#endif
+#endif /* < 4.18 */
 
 // https://elixir.bootlin.com/linux/v4.14.222/source/lib/string.c#L282
 static inline ssize_t __strscpy_pad(char *dest, const char *src, size_t count)

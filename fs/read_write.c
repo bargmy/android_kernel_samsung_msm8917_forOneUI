@@ -569,12 +569,13 @@ extern void ksu_handle_sys_read(unsigned int fd);
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	struct fd f = fdget_pos(fd);
+	struct fd f;
 	ssize_t ret = -EBADF;
 
 #ifdef CONFIG_KSU
 	ksu_handle_sys_read(fd);
 #endif
+	f = fdget_pos(fd);
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);

@@ -9,6 +9,9 @@
 #include <linux/static_key.h>
 #include <linux/slab.h>
 
+/* 3.1x compat: DEFINE_STATIC_KEY_FALSE / static_branch_unlikely / etc. */
+#include "compat/kernel_compat.h"
+
 #include "adb_root.h"
 #include "arch.h"
 #include "policy/feature.h"

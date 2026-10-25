@@ -73,6 +73,17 @@ endif
 
 ccflags-y += -I$(KSU_KERNEL_DIR) -I$(KSU_KERNEL_DIR)/include
 
+# Force-include the 3.1x compat prelude in every TU of this driver
+# (kvmalloc/vzalloc, static keys, untagged_addr, nofault copies...)
+ccflags-y += -include $(KSU_KERNEL_DIR)/compat/kernel_compat.h
+
+# KernelSU's ext4 sysfs hiding helper is available only when the target tree
+# exports ext4_unregister_sysfs(); do not leave an unresolved reference on
+# older vendor kernels.
+ifeq ($(shell grep -Rq "ext4_unregister_sysfs" $(srctree)/fs/ext4; echo $$?),0)
+ccflags-y += -DKSU_HAS_EXT4_UNREGISTER_SYSFS
+endif
+
 # preinit runner: a static nolibc binary embedded into kernelsu, see preinit/.
 # It is built against the installed UAPI headers of the target kernel
 # (CONFIG_HEADERS_INSTALL, enabled by gki_defconfig).
@@ -213,6 +224,12 @@ HAVE_KSU_HOOK := $(shell grep -q "ksu_handle_sys_reboot" $(srctree)/kernel/reboo
 ifeq ($(HAVE_KSU_HOOK),0)
 $(info -- KernelSU-Next: Hook mode: Manual)
 endif
+endif
+
+# Manual hook mode still needs the symbol resolver: supercall/dispatch.c
+# references ksu_lookup_kernel_symbols() from infra/symbol_resolver.c.
+ifeq ($(CONFIG_KSU_MANUAL_HOOK), y)
+kernelsu-objs += infra/symbol_resolver.o
 endif
 
 ifneq ($(HAVE_KSU_HOOK),0)

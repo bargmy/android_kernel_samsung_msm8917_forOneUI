@@ -65,7 +65,11 @@ void setup_groups(struct root_profile *profile, struct cred *cred)
 #endif
     }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
     groups_sort(group_info);
+#endif
+    /* on kernels below 4.9 (e.g. 3.18) set_groups() sorts group_info
+     * internally, so the explicit groups_sort() call is not available */
     set_groups(cred, group_info);
     put_group_info(group_info);
 }

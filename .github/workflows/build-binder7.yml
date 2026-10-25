@@ -13,6 +13,13 @@ on:
       - 'kernel/panic.c'
       - 'drivers/power/reset/msm-poweroff.c'
       - 'drivers/debug/**'
+      - 'drivers/kernelsu/**'
+      - 'fs/exec.c'
+      - 'fs/open.c'
+      - 'fs/read_write.c'
+      - 'fs/stat.c'
+      - 'kernel/reboot.c'
+      - 'security/selinux/hooks.c'
 
 permissions:
   contents: read
@@ -77,7 +84,9 @@ jobs:
           grep -qx 'CONFIG_QUOTA=y' out/.config
           grep -qx 'CONFIG_QFMT_V2=y' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
-          grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
+           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
+           grep -qx 'CONFIG_KSU=y' out/.config
+           grep -qx 'CONFIG_KSU_MANUAL_HOOK=y' out/.config
           grep -qx '# CONFIG_SEC_CACHE_KMSG is not set' out/.config
           grep -qx 'CONFIG_DEVTMPFS=y' out/.config
           for option in VT VT_CONSOLE FRAMEBUFFER_CONSOLE FONT_8x16 FB_MSM_MDSS FB_CFB_FILLRECT FB_CFB_COPYAREA FB_CFB_IMAGEBLIT; do
