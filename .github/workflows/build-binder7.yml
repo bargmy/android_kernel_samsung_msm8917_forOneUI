@@ -1,4 +1,4 @@
-name: J250F Binder 8 kernel
+name: J250F Binder 7 kernel
 
 on:
   workflow_dispatch:
@@ -67,18 +67,18 @@ jobs:
           echo "CROSS_COMPILE=$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/gcc49/bin/arm-linux-androideabi-gcc" --version
 
-      - name: Configure and verify Binder 8
+      - name: Configure and verify Binder 7
         run: |
           set -euxo pipefail
           make O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon j2y18lte_defconfig
           make O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon olddefconfig
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
-          grep -qx '# CONFIG_ANDROID_BINDER_IPC_32BIT is not set' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_QUOTA=y' out/.config
           grep -qx 'CONFIG_QFMT_V2=y' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
-          grep -qx '# CONFIG_SEC_CACHE_KMSG is not set' out/.config
+          grep -qx 'CONFIG_SEC_CACHE_KMSG=y' out/.config
           grep -qx 'CONFIG_DEVTMPFS=y' out/.config
           for option in VT VT_CONSOLE FRAMEBUFFER_CONSOLE FONT_8x16 FB_MSM_MDSS FB_CFB_FILLRECT FB_CFB_COPYAREA FB_CFB_IMAGEBLIT; do
             grep -qx "CONFIG_${option}=y" out/.config
@@ -101,9 +101,10 @@ jobs:
           grep -q ' j2fb_copyarea$' out/System.map
           grep -q ' j2fb_imageblit$' out/System.map
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
-          grep -qx '# CONFIG_ANDROID_BINDER_IPC_32BIT is not set' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_QUOTA=y' out/.config
           grep -qx 'CONFIG_QFMT_V2=y' out/.config
+          grep -qx 'CONFIG_SEC_CACHE_KMSG=y' out/.config
           mkdir -p artifacts
           cp out/arch/arm/boot/zImage artifacts/
           cp out/.config artifacts/kernel.config
@@ -117,7 +118,7 @@ jobs:
       - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: j250f-binder8-kernel-${{ github.run_number }}
+          name: j250f-binder7-kernel-${{ github.run_number }}
           path: artifacts/
           if-no-files-found: error
 
