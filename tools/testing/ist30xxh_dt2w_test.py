@@ -32,6 +32,7 @@ STUBS = r'''
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <stddef.h>
 typedef uint32_t u32;
 typedef uint16_t u16;
 #define IST30XX_NOISE_MODE
@@ -51,12 +52,27 @@ typedef uint16_t u16;
 #define LPM_MODE 1
 #define NOISE_MODE_POWER 8
 #define EVENT_TIMER_INTERVAL 1
+#define NOTIFY_DONE 0
+#define NOTIFY_OK 1
+#define FB_EVENT_BLANK 0x09
+#define FB_EARLY_EVENT_BLANK 0x10
+#define FB_R_EARLY_EVENT_BLANK 0x11
+#define FB_BLANK_UNBLANK 0
+#define FB_BLANK_NORMAL 1
+#define FB_BLANK_VSYNC_SUSPEND 2
+#define FB_BLANK_HSYNC_SUSPEND 3
+#define FB_BLANK_POWERDOWN 4
+#define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define tsp_err(...) ((void)0)
 #define tsp_warn(...) ((void)0)
 #define tsp_info(...) ((void)0)
 #define tsp_noti(...) ((void)0)
 #define tsp_debug(...) ((void)0)
 struct device { int unused; };
+struct notifier_block { int unused; };
+struct fb_info { int node; };
+struct fb_event { struct fb_info *info; void *data; };
+struct mock_input_dev { int users; };
 struct i2c_client { struct device dev; int irq; void *data; };
 struct ist30xx_data {
     struct i2c_client *client;
@@ -65,6 +81,8 @@ struct ist30xx_data {
     struct { int width, height; } tsp_info;
     struct { int sys_mode, power; bool noise_mode; } status;
     bool double_tap_to_wake, suspend, spay, aod, irq_wake_enabled;
+    bool initialized;
+    struct notifier_block fb_notifier;
     int debugging_mode, noise_mode, lock, aod_lock, event_timer;
     int work_reset_check, work_noise_protect, work_debug_algorithm;
     unsigned int scrub_id, scrub_x, scrub_y;
@@ -180,7 +198,63 @@ int main(void)
     d.double_tap_to_wake = false;
     assert(!ist30xx_suspend(&c.dev) && !wake_refs && !d.status.power);
     assert(power_offs >= 4);
+    assert(!ist30xx_resume(&c.dev));
+    {
+        struct mock_input_dev input = {2}; /* sec_key_notifier + evdev remain open */
+        struct fb_info primary = {0}, secondary = {1};
+        int blank = FB_BLANK_POWERDOWN, prior_power_offs = power_offs;
+        struct fb_event display = {&primary, &blank};
+        struct notifier_block *nb = &d.fb_notifier;
+        d.input_dev = &input;
+        d.double_tap_to_wake = true;
+        /* Ignore pre-probe, early/reverted, malformed and secondary events. */
+        d.initialized = false;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_DONE);
+        d.initialized = true;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, NULL) == NOTIFY_DONE);
+        assert(ist30xx_fb_notifier_callback(nb, FB_EARLY_EVENT_BLANK, &display) == NOTIFY_DONE);
+        assert(ist30xx_fb_notifier_callback(nb, FB_R_EARLY_EVENT_BLANK, &display) == NOTIFY_DONE);
+        display.info = &secondary;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_DONE);
+        display.info = NULL;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_DONE);
+        display.info = &primary; display.data = NULL;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_DONE);
+        display.data = &blank; blank = 99;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_DONE);
+        assert(!d.suspend && !wake_refs && power_offs == prior_power_offs);
+        blank = FB_BLANK_POWERDOWN;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+        assert(d.suspend && d.status.sys_mode == LPM_MODE && wake_refs == 1);
+        assert(input.users == 2); /* No input close is needed. */
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+        assert(wake_refs == 1);
+        /* A hardware AOD event now produces the wake key while input stays open. */
+        event.b.evt = IST30XX_GETURE_EVT_AOD;
+        ist30xx_special_cmd(&d, 0); assert(wake_keys == 2 && input.users == 2);
+        blank = FB_BLANK_UNBLANK;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+        assert(!d.suspend && !wake_refs && input.users == 2);
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+        assert(!wake_refs);
+        for (blank = FB_BLANK_NORMAL; blank <= FB_BLANK_POWERDOWN; blank++) {
+            int unblank = FB_BLANK_UNBLANK;
+            assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+            assert(d.suspend && wake_refs == 1);
+            display.data = &unblank;
+            assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+            assert(!d.suspend && !wake_refs);
+            display.data = &blank;
+        }
+        d.double_tap_to_wake = false; blank = FB_BLANK_POWERDOWN;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+        assert(d.suspend && !wake_refs && !d.status.power);
+        blank = FB_BLANK_UNBLANK;
+        assert(ist30xx_fb_notifier_callback(nb, FB_EVENT_BLANK, &display) == NOTIFY_OK);
+        assert(!d.suspend && d.status.power && input.users == 2);
+    }
     puts("PASS: gesture overlay, event filtering, I2C failures, suspend/resume and IRQ wake balance");
+    puts("PASS: display notifications enter/exit LPM with input handles held open; invalid events ignored");
     return 0;
 }
 '''
@@ -198,8 +272,16 @@ def main():
     constants = "\n".join(line for line in header.splitlines() if line.startswith("#define IST30XX_GETURE_"))
     # Insert the driver's actual ABI rather than duplicating its register layout.
     prefix = STUBS.replace("struct device {", constants + "\n" + union + "\nstruct device {")
-    funcs = "\n".join([function(sys, "ist30xx_write_gesture"), function(sys, "ist30xx_cmd_gesture"), function(core, "ist30xx_special_cmd"), function(core, "ist30xx_suspend"), function(core, "ist30xx_resume")])
+    funcs = "\n".join([function(sys, "ist30xx_write_gesture"), function(sys, "ist30xx_cmd_gesture"), function(core, "ist30xx_special_cmd"), function(core, "ist30xx_suspend"), function(core, "ist30xx_resume"), function(core, "ist30xx_fb_notifier_callback")])
     assert "getnstimeofday" not in function(core, "report_input_data")
+    probe = function(core, "ist30xx_probe")
+    assert '#if defined(USE_OPEN_CLOSE) && !defined(CONFIG_FB)\n    input_dev->open = ist30xx_ts_open;\n    input_dev->close = ist30xx_ts_close;\n#endif' in probe
+    assert probe.index('fb_register_client(') < probe.index('ist30xx_get_info(')
+    assert probe.index('INIT_DELAYED_WORK(&data->work_reset_check') < probe.index('data->initialized = true;')
+    assert 'fb_unregister_client(' in probe[probe.index('err_read_info:'):]
+    for name in ('ist30xx_remove', 'ist30xx_shutdown'):
+        cleanup = function(core, name)
+        assert cleanup.index('fb_unregister_client(') < cleanup.index('ist30xx_disable_irq(')
     with tempfile.TemporaryDirectory(prefix="ist30xxh-dt2w-") as tmp:
         source = Path(tmp) / "test.c"
         binary = Path(tmp) / ("test.exe" if os.name == "nt" else "test")

@@ -1170,7 +1170,46 @@ static int ist30xx_resume(struct device *dev)
     return 0;
 }
 
-#ifdef USE_OPEN_CLOSE
+#ifdef CONFIG_FB
+/*
+ * Input handles may stay open while the display is off (sec_key_notifier,
+ * evdev). Use completed primary-display transitions, not input user counts.
+ */
+static int ist30xx_fb_notifier_callback(struct notifier_block *self,
+        unsigned long event, void *ptr)
+{
+    struct ist30xx_data *data = container_of(self, struct ist30xx_data,
+            fb_notifier);
+    struct fb_event *evdata = ptr;
+    int blank;
+
+    if (event != FB_EVENT_BLANK || !evdata || !evdata->info ||
+            !evdata->data || evdata->info->node != 0 || !data->initialized)
+        return NOTIFY_DONE;
+
+    blank = *(int *)evdata->data;
+    switch (blank) {
+    case FB_BLANK_UNBLANK:
+        tsp_info("display unblank: resume touch\n");
+        ist30xx_resume(&data->client->dev);
+        break;
+    case FB_BLANK_NORMAL:
+    case FB_BLANK_VSYNC_SUSPEND:
+    case FB_BLANK_HSYNC_SUSPEND:
+    case FB_BLANK_POWERDOWN:
+        tsp_info("display blank (%d): suspend touch, dt2w=%d\n",
+                blank, data->double_tap_to_wake);
+        ist30xx_suspend(&data->client->dev);
+        break;
+    default:
+        return NOTIFY_DONE;
+    }
+
+    return NOTIFY_OK;
+}
+#endif
+
+#if defined(USE_OPEN_CLOSE) && !defined(CONFIG_FB)
 static void ist30xx_ts_close(struct input_dev *dev)
 {
     struct ist30xx_data *data = input_get_drvdata(dev);
@@ -1196,7 +1235,7 @@ static int ist30xx_ts_open(struct input_dev *dev)
 
     return ist30xx_resume(&data->client->dev);
 }
-#elif defined(CONFIG_HAS_EARLYSUSPEND)
+#elif defined(CONFIG_HAS_EARLYSUSPEND) && !defined(CONFIG_FB)
 static void ist30xx_early_suspend(struct early_suspend *h)
 {
     struct ist30xx_data *data = container_of(h, struct ist30xx_data,
@@ -1941,11 +1980,11 @@ static int ist30xx_probe(struct i2c_client *client,
 #endif
     i2c_set_clientdata(client, data);
 
-#ifdef USE_OPEN_CLOSE
+#if defined(USE_OPEN_CLOSE) && !defined(CONFIG_FB)
     input_dev->open = ist30xx_ts_open;
     input_dev->close = ist30xx_ts_close;
 #endif
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#if defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE) && !defined(CONFIG_FB)
     data->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
     data->early_suspend.suspend = ist30xx_early_suspend;
     data->early_suspend.resume = ist30xx_late_resume;
@@ -2062,6 +2101,17 @@ static int ist30xx_probe(struct i2c_client *client,
 	}
 #endif
 
+#ifdef CONFIG_FB
+    /* Ignore display callbacks until probe has initialized input and work. */
+    data->fb_notifier.notifier_call = ist30xx_fb_notifier_callback;
+    ret = fb_register_client(&data->fb_notifier);
+    if (ret) {
+        tsp_err("failed to register display notifier: %d\n", ret);
+        goto err_read_info;
+    }
+    data->fb_registered = true;
+#endif
+
     ret = ist30xx_get_info(data);
     input_info(true, &client->dev, "Get info: %s\n", (ret == 0 ? "success" : "fail"));
     if (unlikely(ret))
@@ -2158,6 +2208,12 @@ err_sec_sysfs:
 err_sysfs:
     class_destroy(ist30xx_class);
 err_read_info:
+#ifdef CONFIG_FB
+    if (data->fb_registered) {
+        fb_unregister_client(&data->fb_notifier);
+        data->fb_registered = false;
+    }
+#endif
 #ifdef IST30XX_INTERNAL_BIN
 err_irq:
 #endif
@@ -2167,7 +2223,7 @@ err_init_drv:
     input_free_device(input_dev);
     data->status.event_mode = false;
     ist30xx_power_off(data);
-#if (defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE))
+#if defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE) && !defined(CONFIG_FB)
     unregister_early_suspend(&data->early_suspend);
 #endif
 err_alloc_dt:
@@ -2194,7 +2250,13 @@ static int ist30xx_remove(struct i2c_client *client)
 {
     struct ist30xx_data *data = i2c_get_clientdata(client);
 
-#if (defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE))
+#ifdef CONFIG_FB
+    if (data->fb_registered) {
+        fb_unregister_client(&data->fb_notifier);
+        data->fb_registered = false;
+    }
+#endif
+#if defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE) && !defined(CONFIG_FB)
     unregister_early_suspend(&data->early_suspend);
 #endif
 
@@ -2228,7 +2290,13 @@ static void ist30xx_shutdown(struct i2c_client *client)
 {
     struct ist30xx_data *data = i2c_get_clientdata(client);
 
-    del_timer(&data->event_timer);
+#ifdef CONFIG_FB
+    if (data->fb_registered) {
+        fb_unregister_client(&data->fb_notifier);
+        data->fb_registered = false;
+    }
+#endif
+    del_timer_sync(&data->event_timer);
     cancel_delayed_work_sync(&data->work_reset_check);
 #ifdef IST30XX_NOISE_MODE
     cancel_delayed_work_sync(&data->work_noise_protect);
@@ -2262,7 +2330,7 @@ static struct of_device_id ist30xx_match_table[] = {
 #define ist30xx_match_table NULL
 #endif
 
-#if (!defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE))
+#if !defined(CONFIG_FB) && !defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE)
 static const struct dev_pm_ops ist30xx_pm_ops = {
     .suspend    = ist30xx_suspend,
     .resume     = ist30xx_resume,
@@ -2278,7 +2346,7 @@ static struct i2c_driver ist30xx_i2c_driver = {
         .owner          = THIS_MODULE,
         .name           = IST30XX_DEV_NAME,
         .of_match_table = ist30xx_match_table,
-#if (!defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE))
+#if !defined(CONFIG_FB) && !defined(CONFIG_HAS_EARLYSUSPEND) && !defined(USE_OPEN_CLOSE)
         .pm             = &ist30xx_pm_ops,
 #endif
     },

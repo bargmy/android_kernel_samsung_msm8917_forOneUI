@@ -84,6 +84,7 @@ jobs:
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
           grep -qx 'CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT=y' out/.config
+          grep -qx 'CONFIG_FB=y' out/.config
           grep -qx '# CONFIG_SEC_CACHE_KMSG is not set' out/.config
           grep -qx 'CONFIG_DEVTMPFS=y' out/.config
           for option in VT VT_CONSOLE FRAMEBUFFER_CONSOLE FONT_8x16 FB_MSM_MDSS FB_CFB_FILLRECT FB_CFB_COPYAREA FB_CFB_IMAGEBLIT; do
@@ -103,6 +104,7 @@ jobs:
         run: |
           set -euxo pipefail
           test -s out/arch/arm/boot/zImage
+          grep -q ' ist30xx_fb_notifier_callback$' out/System.map
           grep -q ' j2fb_fillrect$' out/System.map
           grep -q ' j2fb_copyarea$' out/System.map
           grep -q ' j2fb_imageblit$' out/System.map

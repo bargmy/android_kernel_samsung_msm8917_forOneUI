@@ -11,6 +11,22 @@ AOD double-tap event. Source code and a successful build do NOT establish
 that the installed touch firmware supports it, nor quantify standby drain.
 No touch firmware changes are included.
 
+Display power integration
+-------------------------
+With CONFIG_FB=y, completed FB_EVENT_BLANK notifications from framebuffer 0
+drive touch suspend/resume. Nonzero blank modes suspend the controller;
+unblank resumes it. Early/reverted events, secondary framebuffers, malformed
+events and callbacks before probe completion are ignored. Input open/close
+and legacy/system PM hooks are not installed in this configuration, so an
+input open cannot resume the panel while the display is off. Non-FB builds
+retain the previous input open/close or legacy/system PM integration.
+
+This is required because Samsung sec_key_notifier opens an input handle for
+the lifetime of the device; input users need not fall to zero at screen-off.
+The first DT2W patch relied on input close, so it never entered gesture mode
+on the tested One UI ROM. The display notifier is registered during probe,
+unregistered on later probe failures, and detached on remove/shutdown.
+
 The gesture register written to hardware overlays full-panel AOD bounds
 (width/height reported by the controller) without modifying the framework's
 stored AOD rectangle or SPAY configuration. A verified, acknowledged AOD
@@ -50,13 +66,17 @@ against mocked I2C, input and IRQ APIs. It covers full-screen overlay and
 preservation of AOD/SPAY settings; stale/failed events; disabled/awake event
 filtering; setup failures; repeated suspend/resume; wake-policy changes;
 IRQ reference balance; and exit-LPM recovery. It is not hardware emulation.
+It also tests display blank/unblank with two mock input users still open,
+repeated transitions, every supported blank mode, and irrelevant/malformed
+notifications. Source checks cover registration, cleanup and input-hook guards.
 GitHub Actions also builds the complete kernel with j2y18lte_defconfig.
 
 Device acceptance (requires separately authorized kernel installation):
 1. Preserve and verify a known-working boot image and recovery/restore path.
 2. Install a correctly packaged kernel built from the recorded commit.
    The CI zImage is NOT a flashable boot image.
-3. Confirm double_tap reads 1. Check dmesg for gesture enable (dt2w : 1)
+3. Confirm double_tap reads 1. Check dmesg for display blank and gesture
+   enable (dt2w : 1), followed by display unblank on normal wake,
    and absence of setup/I2C errors after screen-off.
 4. Tap the panel twice with the display off: check AOD Trigger and KEY_WAKEUP
    on the sec_touchscreen input device, then confirm the display wakes.

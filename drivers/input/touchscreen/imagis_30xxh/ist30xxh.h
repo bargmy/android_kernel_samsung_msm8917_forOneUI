@@ -16,6 +16,10 @@
 #ifndef __IST30XXH_H__
 #define __IST30XXH_H__
 
+#ifdef CONFIG_FB
+#include <linux/fb.h>
+#endif
+
 /*
  * Support F/W ver : ~ IST30xxH v1.0.0.0
  * Support CmCs ver : v1.0
@@ -591,6 +595,10 @@ struct ist30xx_data {
     struct mutex aod_lock;
     struct i2c_client *client;
     struct input_dev *input_dev;
+#ifdef CONFIG_FB
+    struct notifier_block fb_notifier;
+    bool fb_registered;
+#endif
     struct ist30xx_dt_data *dt_data;
     TSP_INFO tsp_info;
     TKEY_INFO tkey_info;
