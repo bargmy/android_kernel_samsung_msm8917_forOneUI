@@ -1,0 +1,73 @@
+IST30XXH firmware-assisted double tap to wake
+===========================================
+
+Scope and limitations
+---------------------
+CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT enables DT2W by default on probe.
+The j2y18lte defconfig enables it. There is no normal-touch software tap
+detector, polling loop or permanent CPU wakelock. The panel remains in the
+existing controller LPM/AOD gesture mode; the controller must implement its
+AOD double-tap event. Source code and a successful build do NOT establish
+that the installed touch firmware supports it, nor quantify standby drain.
+No touch firmware changes are included.
+
+The gesture register written to hardware overlays full-panel AOD bounds
+(width/height reported by the controller) without modifying the framework's
+stored AOD rectangle or SPAY configuration. A verified, acknowledged AOD
+event while screen-off produces KEY_WAKEUP when DT2W is enabled. Existing
+KEY_BLACK_UI_GESTURE reporting remains available to Samsung userspace.
+
+Suspend enters LPM only if gesture setup and enable_irq_wake succeed.
+Otherwise the panel is powered off. Resume balances only IRQ wake references
+the driver actually acquired. Failure to exit LPM triggers a controller reset.
+The existing touch watchdog is stopped while screen-off. Failed I2C reads
+and acknowledgements do not generate a wake key from stale event data.
+
+Runtime control
+---------------
+Read /sys/class/sec/tsp/double_tap to see the current kernel setting.
+With the screen ON, the existing factory command interface accepts:
+
+  echo double_tap,0 > /sys/class/sec/tsp/cmd    # disable
+  cat /sys/class/sec/tsp/cmd_result
+  echo double_tap,1 > /sys/class/sec/tsp/cmd    # enable
+  cat /sys/class/sec/tsp/cmd_result
+
+These require appropriate device privileges/SELinux policy. Invalid values
+or changes while screen-off return NG. Controls take effect on the next
+screen-off transition. The setting resets to its build default at reboot;
+Android settings database toggles are not automatically connected to it.
+Do not automate a persistent enable until the device test is successful.
+
+Verification
+------------
+Host logic tests (Python 3, host C compiler, no external Python packages):
+
+  python3 tools/testing/ist30xxh_dt2w_test.py
+
+The harness compiles the actual gesture write/event/suspend/resume functions
+against mocked I2C, input and IRQ APIs. It covers full-screen overlay and
+preservation of AOD/SPAY settings; stale/failed events; disabled/awake event
+filtering; setup failures; repeated suspend/resume; wake-policy changes;
+IRQ reference balance; and exit-LPM recovery. It is not hardware emulation.
+GitHub Actions also builds the complete kernel with j2y18lte_defconfig.
+
+Device acceptance (requires separately authorized kernel installation):
+1. Preserve and verify a known-working boot image and recovery/restore path.
+2. Install a correctly packaged kernel built from the recorded commit.
+   The CI zImage is NOT a flashable boot image.
+3. Confirm double_tap reads 1. Check dmesg for gesture enable (dt2w : 1)
+   and absence of setup/I2C errors after screen-off.
+4. Tap the panel twice with the display off: check AOD Trigger and KEY_WAKEUP
+   on the sec_touchscreen input device, then confirm the display wakes.
+   Test the center and edges, single taps, swipes and pocket false positives.
+5. Repeat at least 20 screen-off/wake cycles; also test normal touch, SPAY
+   and framework AOD if used, and wake using the hardware keys.
+6. Unplug USB for real deep-sleep testing; compare matched idle runs with
+   DT2W off/on. USB/ADB testing alone cannot prove deep-sleep battery impact.
+7. If no AOD event arrives, the firmware capability remains unverified.
+   Do not substitute a software scanner or claim support from the toggle.
+
+Disable double_tap while the screen is on to return to the ordinary panel
+power-off behavior when framework AOD/SPAY are also off. If touch or boot
+regresses, restore the previously verified boot image using recovery.

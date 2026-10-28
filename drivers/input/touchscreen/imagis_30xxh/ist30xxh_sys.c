@@ -40,21 +40,39 @@
  * ENXIO  : 6 (No such device or address)
  * EINVAL : 22 (Invalid argument)
  *****************************************************************************/
+int ist30xx_write_gesture(struct ist30xx_data *data)
+{
+    gesture_reg reg = data->g_reg;
+
+    reg.b.evt = 0;
+    reg.b.evt_x = 0;
+    reg.b.evt_y = 0;
+    if (data->double_tap_to_wake) {
+        /* Keep the framework's AOD settings intact; DT2W covers the panel. */
+        reg.b.ctrl |= IST30XX_GETURE_CTRL_AOD;
+        reg.b.setting |= IST30XX_GETURE_SET_AOD;
+        reg.b.w = data->tsp_info.width;
+        reg.b.h = data->tsp_info.height;
+        reg.b.x = 0;
+        reg.b.y = 0;
+    }
+
+    return ist30xx_burst_write(data->client, IST30XX_HIB_GESTURE_REG,
+            reg.full, sizeof(reg.full) / IST30XX_DATA_LEN);
+}
+
 int ist30xx_cmd_gesture(struct ist30xx_data *data, u16 value)
 {
     int ret = -EIO;
 
     if (value == IST30XX_ENABLE) {
-        data->g_reg.b.evt = 0;
-        data->g_reg.b.evt_x = 0;
-        data->g_reg.b.evt_y = 0;
-
         ret = ist30xx_write_cmd(data, IST30XX_HIB_INTR_MSG, IST30XX_LPM_VALUE);
-        if (ret)
+        if (ret) {
             tsp_err("fail to write LPM magic value.\n");
+            return ret;
+        }
 
-        ret = ist30xx_burst_write(data->client, IST30XX_HIB_GESTURE_REG,
-                data->g_reg.full, sizeof(data->g_reg.full) / IST30XX_DATA_LEN);
+        ret = ist30xx_write_gesture(data);
         if (ret) {
             tsp_err("fail to write gesture reg map.\n");
             return ret;
@@ -67,9 +85,10 @@ int ist30xx_cmd_gesture(struct ist30xx_data *data, u16 value)
         tsp_err("fail to write gesture command.\n");
     } else {
         if (value == IST30XX_ENABLE) {
-            tsp_info("%s, spay : %d, aod : %d\n", __func__,
+            tsp_info("%s, spay : %d, aod : %d, dt2w : %d\n", __func__,
                     (data->g_reg.b.ctrl & IST30XX_GETURE_CTRL_SPAY) ? 1 : 0,
-                    (data->g_reg.b.ctrl & IST30XX_GETURE_CTRL_AOD) ? 1 : 0);
+                    (data->g_reg.b.ctrl & IST30XX_GETURE_CTRL_AOD) ? 1 : 0,
+                    data->double_tap_to_wake);
         } else {
             tsp_info("%s, normal mode\n", __func__);
         }

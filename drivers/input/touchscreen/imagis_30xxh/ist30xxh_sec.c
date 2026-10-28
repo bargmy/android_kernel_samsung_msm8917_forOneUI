@@ -600,8 +600,7 @@ static void set_aod_rect(void *dev_data)
         data->g_reg.b.h = sec->cmd_param[1];
         data->g_reg.b.x = sec->cmd_param[2];
         data->g_reg.b.y = sec->cmd_param[3];
-        ret = ist30xx_burst_write(data->client, IST30XX_HIB_GESTURE_REG,
-                data->g_reg.full, sizeof(data->g_reg.full) / IST30XX_DATA_LEN);
+        ret = ist30xx_write_gesture(data);
         ist30xx_enable_irq(data);
         data->status.noise_mode = false;
         mutex_unlock(&data->aod_lock);
@@ -3710,9 +3709,17 @@ static void set_dt2w_support(void *dev_data)
 	char buf[16] = { 0 };
 
 	set_default_result(sec);
-	data->double_tap_to_wake = sec->cmd_param[0];
-
-        snprintf(buf, sizeof(buf), "%s", "OK");
+	mutex_lock(&data->lock);
+	/* Apply only before screen-off, so IRQ wake references stay balanced. */
+	if (data->suspend || (sec->cmd_param[0] != 0 && sec->cmd_param[0] != 1)) {
+		sec->cmd_state = CMD_STATE_FAIL;
+		snprintf(buf, sizeof(buf), "%s", "NG");
+	} else {
+		data->double_tap_to_wake = !!sec->cmd_param[0];
+		sec->cmd_state = CMD_STATE_OK;
+		snprintf(buf, sizeof(buf), "%s", "OK");
+	}
+	mutex_unlock(&data->lock);
 	set_cmd_result(sec, buf, strnlen(buf, sizeof(buf)));
 	
 	mutex_lock(&sec->cmd_lock);
@@ -4136,6 +4143,22 @@ static ssize_t read_ambient_channel_delta_show(struct device *dev, struct device
     return ret;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
+static ssize_t double_tap_show(struct device *dev,
+        struct device_attribute *attr, char *buf)
+{
+    struct ist30xx_data *data = dev_get_drvdata(dev);
+    bool enabled;
+
+    mutex_lock(&data->lock);
+    enabled = data->double_tap_to_wake;
+    mutex_unlock(&data->lock);
+    return snprintf(buf, PAGE_SIZE, "%d\n", enabled);
+}
+
+static DEVICE_ATTR(double_tap, S_IRUGO, double_tap_show, NULL);
+#endif
+
 /* sysfs - tsp */
 static DEVICE_ATTR(close_tsp_test, S_IRUGO, show_close_tsp_test, NULL);
 static DEVICE_ATTR(cmd, S_IWUSR | S_IWGRP, NULL, store_cmd);
@@ -4159,6 +4182,9 @@ static DEVICE_ATTR(read_ambient_channel_info, 0444, read_ambient_channel_info_sh
 static DEVICE_ATTR(read_ambient_channel_delta, 0444, read_ambient_channel_delta_show, NULL);
 
 static struct attribute *sec_touch_facotry_attributes[] = {
+#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
+    &dev_attr_double_tap.attr,
+#endif
     &dev_attr_close_tsp_test.attr,
     &dev_attr_cmd.attr,
     &dev_attr_cmd_status.attr,

@@ -3,31 +3,12 @@
 #
 
 config TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
-	bool "DT2W Support"
+	bool "Firmware-assisted double tap to wake"
 	default y
 	depends on TOUCHSCREEN_IST30XXH
 	help
-	  Say Y here to support double tap to wake on Imagis IST30XXH Touchscreen.
-
-config TOUCHSCREEN_IST30XXH_DT2W_MIN_TIME
-	int "DT2W min time to recognise double tap"
-	default 150
-	depends on TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
-	help
-	  Setup the min time in million nanoseconds for the tsp driver to accept double tap.
-	  It limits time between the double tap delay.
-
-config TOUCHSCREEN_IST30XXH_DT2W_MAX_TIME
-        int "DT2W max time to recognise double tap"
-	default 500
-        depends on TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
-        help
-          Setup the max time in scale of million nanoseconds for the tsp driver to accept double tap.
-          It limits time between the double tap delay.
-
-config TOUCHSCREEN_IST30XXH_DT2W_DEBUG
-	bool "DT2W DEBUG"
-	default n
-	depends on TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
-	help
-          Say Y here to debug dt2w detection. It will print log on tap, double tap..
+	  Enable double tap to wake by default using the controller's low-power
+	  AOD double-tap event and a wake-capable IRQ. Requires touch firmware
+	  that implements this gesture. No software tap detector or polling is
+	  used. The factory double_tap command can disable/enable it while the
+	  screen is on; changes take effect at the next screen-off transition.

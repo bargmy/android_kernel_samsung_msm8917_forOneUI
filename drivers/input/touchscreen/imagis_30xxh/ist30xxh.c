@@ -288,6 +288,7 @@ int ist30xx_set_input_device(struct ist30xx_data *data)
     }
 #endif
     input_set_capability(data->input_dev, EV_KEY, KEY_BLACK_UI_GESTURE);
+    input_set_capability(data->input_dev, EV_KEY, KEY_WAKEUP);
 
     input_set_drvdata(data->input_dev, data);
     ret = input_register_device(data->input_dev);
@@ -355,18 +356,24 @@ err_get_info:
 #define SPECIAL_SUCCESS_MASK        (0x0F)
 void ist30xx_special_cmd(struct ist30xx_data *data, int cmd)
 {
+    gesture_reg reg;
+    int ret;
+
     if (cmd == 0) {
-        ist30xx_burst_read(data->client, IST30XX_HIB_GESTURE_REG,
-                data->g_reg.full, sizeof(data->g_reg.full) / IST30XX_DATA_LEN,
-                true);
+        /* Do not overwrite the framework's requested AOD configuration. */
+        ret = ist30xx_burst_read(data->client, IST30XX_HIB_GESTURE_REG,
+                reg.full, sizeof(reg.full) / IST30XX_DATA_LEN, true);
+        if (ret) {
+            tsp_err("failed to read gesture event: %d\n", ret);
+            return;
+        }
 
         tsp_debug("0x%02X, 0x%02X, %d, %d, %d, %d, %d, %d, 0x%02X\n",
-                data->g_reg.b.ctrl, data->g_reg.b.evt, data->g_reg.b.w,
-                data->g_reg.b.h, data->g_reg.b.x, data->g_reg.b.y,
-                data->g_reg.b.evt_x, data->g_reg.b.evt_y,
-                data->g_reg.b.setting);
+                reg.b.ctrl, reg.b.evt, reg.b.w,
+                reg.b.h, reg.b.x, reg.b.y,
+                reg.b.evt_x, reg.b.evt_y, reg.b.setting);
  
-        if (data->g_reg.b.evt & IST30XX_GETURE_EVT_SPAY) {
+        if (reg.b.evt & IST30XX_GETURE_EVT_SPAY) {
             tsp_noti("SPAY Trigger~\n");
 
             data->scrub_id = SPONGE_EVENT_TYPE_SPAY;
@@ -377,16 +384,26 @@ void ist30xx_special_cmd(struct ist30xx_data *data, int cmd)
             input_sync(data->input_dev);
             input_report_key(data->input_dev, KEY_BLACK_UI_GESTURE, 0);
             input_sync(data->input_dev);
-        } else if (data->g_reg.b.evt & IST30XX_GETURE_EVT_AOD) {
-            tsp_noti("AOD Trigger~ (%d, %d)\n", data->g_reg.b.evt_x,
-                    data->g_reg.b.evt_y);
-            data->g_reg.b.evt = 0;
-            ist30xx_burst_write(data->client, IST30XX_HIB_GESTURE_REG,
-                    data->g_reg.full, 1);
+        } else if (reg.b.evt & IST30XX_GETURE_EVT_AOD) {
+            tsp_noti("AOD Trigger~ (%d, %d)\n", reg.b.evt_x, reg.b.evt_y);
+            reg.b.evt = 0;
+            ret = ist30xx_burst_write(data->client, IST30XX_HIB_GESTURE_REG,
+                    reg.full, 1);
+            if (ret) {
+                tsp_err("failed to acknowledge AOD event: %d\n", ret);
+                return;
+            }
 
             data->scrub_id = SPONGE_EVENT_TYPE_AOD_DOUBLETAB;
-            data->scrub_x = data->g_reg.b.evt_x;
-            data->scrub_y = data->g_reg.b.evt_y;
+            data->scrub_x = reg.b.evt_x;
+            data->scrub_y = reg.b.evt_y;
+
+            if (data->suspend && data->double_tap_to_wake) {
+                input_report_key(data->input_dev, KEY_WAKEUP, 1);
+                input_sync(data->input_dev);
+                input_report_key(data->input_dev, KEY_WAKEUP, 0);
+                input_sync(data->input_dev);
+            }
 
             input_report_key(data->input_dev, KEY_BLACK_UI_GESTURE, 1);
             input_sync(data->input_dev);
@@ -632,12 +649,6 @@ static void report_input_data(struct ist30xx_data *data, int finger_counts,
     u32 *z_values = (u32 *)data->z_values;
     int idx = 0;
     u32 status;
-#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
-    static long current_time, before_time;
-    struct timespec ts;
-    static int last_pressed = 0;
-    int pressed = 0;
-#endif /* CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT */
 
     memset(data->t_frame, 0, sizeof(data->t_frame));
 
@@ -677,43 +688,6 @@ static void report_input_data(struct ist30xx_data *data, int finger_counts,
         }
         idx++;
     }
-#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
-
-#define MIN_NANOSEC CONFIG_TOUCHSCREEN_IST30XXH_DT2W_MIN_TIME * 1000 * 1000
-#define MAX_NANOSEC CONFIG_TOUCHSCREEN_IST30XXH_DT2W_MAX_TIME * 1000 * 1000
-
-#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_DEBUG
-#define dt2w_log(fmt, ...) input_info(true, &data->client->dev, "[DT2W] " fmt, ##__VA_ARGS__)
-#else
-#define dt2w_log(...)
-#endif
-	pressed = data->all_finger_count;
-	dt2w_log("pressed: %d last_pressed: %d", pressed, last_pressed);
-	if (pressed & last_pressed == 0 && pressed | last_pressed == 1) {
-		getnstimeofday(&ts);
-		current_time = ts.tv_nsec;
-		if (data->double_tap_to_wake) {
-			long diff;
-			bool ignore;
-
-			data->scrub_id = SPONGE_EVENT_TYPE_AOD_DOUBLETAB;
-			dt2w_log("Tab detected\n");
-			diff = current_time - before_time;
-			ignore = MIN_NANOSEC > diff || diff > MAX_NANOSEC;
-			dt2w_log("diff is %ld, %s", diff, ignore ? "Ignoring" : "");
-			if (!ignore) {
-				dt2w_log("Double tap detected\n");
-				input_report_key(data->input_dev, KEY_WAKEUP, 1);
-				input_sync(data->input_dev);
-				input_report_key(data->input_dev, KEY_WAKEUP, 0);
-				input_sync(data->input_dev);
-				dt2w_log("Reported KEY_WAKEUP\n");
-			}
-		}
-		before_time = current_time;
-		last_pressed = pressed;
-	}
-#endif /* CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT */
 #ifdef IST30XX_USE_KEY
     status = PARSE_KEY_STATUS(data->t_status);
     for (id = 0; id < ARRAY_SIZE(ist30xx_key_code); id++) {
@@ -829,7 +803,7 @@ static irqreturn_t ist30xx_irq_thread(int irq, void *ptr)
     if (unlikely(!data->irq_enabled))
         goto irq_ignore;
 
-    if (data->spay || data->aod){
+    if (data->suspend && data->status.sys_mode == LPM_MODE) {
         pm_wakeup_event(data->input_dev->dev.parent, 2000);
     }
 
@@ -1092,7 +1066,7 @@ static int ist30xx_suspend(struct device *dev)
     if (data->debugging_mode)
         return 0;
 
-    del_timer(&data->event_timer);
+    del_timer_sync(&data->event_timer);
     cancel_delayed_work_sync(&data->work_reset_check);
 #ifdef IST30XX_NOISE_MODE
     cancel_delayed_work_sync(&data->work_noise_protect);
@@ -1101,16 +1075,31 @@ static int ist30xx_suspend(struct device *dev)
 #endif
     cancel_delayed_work_sync(&data->work_debug_algorithm);
     mutex_lock(&data->lock);
+    if (data->suspend) {
+        mutex_unlock(&data->lock);
+        return 0;
+    }
+    ist30xx_disable_irq(data);
     data->suspend = true;
-    if (data->spay || data->aod) {
-        ist30xx_cmd_gesture(data, IST30XX_ENABLE);
+    if ((data->spay || data->aod || data->double_tap_to_wake) &&
+            device_may_wakeup(&data->client->dev)) {
+        ret = ist30xx_cmd_gesture(data, IST30XX_ENABLE);
+        if (ret)
+            goto power_off;
+        ret = enable_irq_wake(data->client->irq);
+        if (ret) {
+            tsp_err("failed to enable gesture IRQ wake: %d\n", ret);
+            ist30xx_cmd_gesture(data, IST30XX_DISABLE);
+            goto power_off;
+        }
+        data->irq_wake_enabled = true;
         data->status.noise_mode = false;
-
-        if (device_may_wakeup(&data->client->dev))
-            enable_irq_wake(data->client->irq);
-
         data->status.sys_mode = LPM_MODE;
+        ist30xx_enable_irq(data);
     } else {
+power_off:
+        /* A failed gesture setup must not leave a scanning panel awake. */
+        data->status.sys_mode = TOUCH_MODE;
         ist30xx_power_off(data);
         ist30xx_disable_irq(data);
         if (data->pinctrl) {
@@ -1137,17 +1126,31 @@ static int ist30xx_resume(struct device *dev)
         return 0;
 
     mutex_lock(&data->lock);
+    if (!data->suspend) {
+        mutex_unlock(&data->lock);
+        return 0;
+    }
+    ist30xx_disable_irq(data);
     data->suspend = false;
+    if (data->irq_wake_enabled) {
+        disable_irq_wake(data->client->irq);
+        data->irq_wake_enabled = false;
+    }
     if (data->status.sys_mode != TOUCH_MODE) {
-        ist30xx_cmd_gesture(data, IST30XX_DISABLE);
+        ret = ist30xx_cmd_gesture(data, IST30XX_DISABLE);
+        if (ret) {
+            tsp_err("failed to exit gesture mode: %d; resetting\n", ret);
+            ist30xx_disable_irq(data);
+            ist30xx_reset(data, false);
+            ist30xx_enable_irq(data);
+            ist30xx_start(data);
+        }
         mod_timer(&data->event_timer,
                 get_jiffies_64() + EVENT_TIMER_INTERVAL * 2);
         data->status.noise_mode = true;
 
-        if (device_may_wakeup(&data->client->dev))
-            disable_irq_wake(data->client->irq);
-
         data->status.sys_mode = TOUCH_MODE;
+        ist30xx_enable_irq(data);
     } else {
         if (data->pinctrl) {
             ret = ist30xx_pinctrl_configure(data, true);
@@ -1393,6 +1396,7 @@ static int tsp_vbus_notification(struct notifier_block *nb,
 
 static void reset_work_func(struct work_struct *work)
 {
+    int ret;
     struct delayed_work *delayed_work = to_delayed_work(work);
     struct ist30xx_data *data = container_of(delayed_work, struct ist30xx_data,
             work_reset_check);
@@ -1417,11 +1421,23 @@ static void reset_work_func(struct work_struct *work)
         ist30xx_reset(data, false);
         clear_input_data(data);
         ist30xx_enable_irq(data);
-        if ((data->spay || data->aod) && data->suspend) {
-            ist30xx_cmd_gesture(data, IST30XX_ENABLE);
+        ist30xx_start(data);
+        if (data->suspend && data->status.sys_mode == LPM_MODE) {
+            ret = ist30xx_cmd_gesture(data, IST30XX_ENABLE);
+            if (ret) {
+                tsp_err("failed to restore gesture mode: %d\n", ret);
+                ist30xx_disable_irq(data);
+                if (data->irq_wake_enabled) {
+                    disable_irq_wake(data->client->irq);
+                    data->irq_wake_enabled = false;
+                }
+                ist30xx_power_off(data);
+                data->status.sys_mode = TOUCH_MODE;
+            }
             data->status.noise_mode = false;
         }
-        ist30xx_start(data);
+        if (data->suspend)
+            del_timer_sync(&data->event_timer);
         mutex_unlock(&data->lock);
     }
 }
@@ -1552,6 +1568,10 @@ void timer_handler(unsigned long timer_data)
 {
     struct ist30xx_data *data = (struct ist30xx_data *)timer_data;
     struct ist30xx_status *status = &data->status;
+
+    /* No watchdog polling while the controller is in screen-off mode. */
+    if (data->suspend)
+        return;
 
     if (data->irq_working || !data->initialized || data->rec_mode)
         goto restart_timer;
@@ -1953,6 +1973,9 @@ static int ist30xx_probe(struct i2c_client *client,
     data->suspend = false;
     data->spay = false;
     data->aod = false;
+#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
+    data->double_tap_to_wake = true;
+#endif
     data->rec_mode = 0;
     data->rec_file_name = kzalloc(IST30XX_REC_FILENAME_SIZE, GFP_KERNEL);
     data->debug_mode = 0;
@@ -2176,6 +2199,11 @@ static int ist30xx_remove(struct i2c_client *client)
 #endif
 
     ist30xx_disable_irq(data);
+    if (data->irq_wake_enabled) {
+        disable_irq_wake(client->irq);
+        data->irq_wake_enabled = false;
+    }
+    device_init_wakeup(&client->dev, false);
     free_irq(client->irq, data);
     ist30xx_power_off(data);
 #ifdef SEC_FACTORY_MODE
@@ -2210,6 +2238,10 @@ static void ist30xx_shutdown(struct i2c_client *client)
     cancel_delayed_work_sync(&data->work_debug_algorithm);
     mutex_lock(&data->lock);
     ist30xx_disable_irq(data);
+    if (data->irq_wake_enabled) {
+        disable_irq_wake(client->irq);
+        data->irq_wake_enabled = false;
+    }
     ist30xx_power_off(data);
     clear_input_data(data);
     mutex_unlock(&data->lock);

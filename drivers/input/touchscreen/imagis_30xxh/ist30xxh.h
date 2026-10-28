@@ -726,9 +726,9 @@ struct ist30xx_data {
     unsigned int scrub_x;
     unsigned int scrub_y;
 
-#ifdef CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT
+    /* DT2W uses the controller's AOD gesture, never normal touch polling. */
     bool double_tap_to_wake;
-#endif
+    bool irq_wake_enabled;
 };
 
 typedef enum {
@@ -765,6 +765,7 @@ int ist30xx_burst_write(struct i2c_client *client, u32 addr, u32 *buf32,
         u16 len);
 
 int ist30xx_cmd_gesture(struct ist30xx_data *data, u16 value);
+int ist30xx_write_gesture(struct ist30xx_data *data);
 int ist30xx_cmd_start_scan(struct ist30xx_data *data);
 int ist30xx_cmd_calibrate(struct ist30xx_data *data);
 int ist30xx_cmd_miscalibrate(struct ist30xx_data *data);
