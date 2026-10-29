@@ -1,0 +1,2 @@
+import /system/etc/j2-rootdir/ueventd.rc
+import /vendor/ueventd.rc

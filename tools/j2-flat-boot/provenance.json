@@ -1,0 +1,8 @@
+{
+  "reference": "OneUI3.1-Core-j2y18lte.zip/boot.img",
+  "reference_boot_sha256": "cdda10b127186e972a2ce4be7c044493d5c42cb604f413f0a3a1c364659d8664",
+  "reference_dt_sha256": "bd07b5f01757effe9d05fb23e3c2210c6f86bc8330f03d3ccfeef4489989d77d",
+  "partition_size": 33554432,
+  "device_tested": false,
+  "template_sha256": "a902e8642e878b55bd2c607959d69af9aab738b94bc7d0a8d4e50c64f2473660"
+}
