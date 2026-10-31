@@ -104,79 +104,9 @@ jobs:
         run: |
           set -euxo pipefail
           test -s out/arch/arm/boot/zImage
-          grep -q ' cache_kmsg_thread
-          grep -q ' j2fb_fillrect$' out/System.map
-          grep -q ' j2fb_copyarea$' out/System.map
-          grep -q ' j2fb_imageblit$' out/System.map
-          grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
-          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
-          grep -qx 'CONFIG_QUOTA=y' out/.config
-          grep -qx 'CONFIG_QFMT_V2=y' out/.config
-          mkdir -p artifacts
-          cp out/arch/arm/boot/zImage artifacts/
-          cp out/.config artifacts/kernel.config
-          cp out/System.map artifacts/
-          find out/arch/arm/boot -name '*.dtb' -type f -print0 | tar --null -T - -czf artifacts/device-trees.tar.gz
-          git rev-parse HEAD > artifacts/source-commit.txt
-          git -C "$RUNNER_TEMP/gcc49" rev-parse HEAD > artifacts/compiler-commit.txt
-          printf '%s\n' 'Kernel only. Not a flashable boot image. Preserve the backed-up ramdisk and verify packaging before flashing.' > artifacts/READ-ME.txt
-          (cd artifacts && sha256sum zImage kernel.config System.map device-trees.tar.gz > SHA256SUMS)
-
-      - name: Upload kernel
-        uses: actions/upload-artifact@v4
-        with:
-          name: j250f-android9-binder7-kernel-${{ github.run_number }}
-          path: artifacts/
-          if-no-files-found: error
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-diagnostics-${{ github.run_number }}
-          path: |
-            build.log
-            out/.config
-          include-hidden-files: true
-          if-no-files-found: ignore
- out/System.map
+          grep -q ' cache_kmsg_thread$' out/System.map
           grep -qx 'CONFIG_SEC_CACHE_KMSG=y' out/.config
-          grep -q ' ist30xx_fb_notifier_callback
-          grep -q ' j2fb_fillrect$' out/System.map
-          grep -q ' j2fb_copyarea$' out/System.map
-          grep -q ' j2fb_imageblit$' out/System.map
-          grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
-          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
-          grep -qx 'CONFIG_QUOTA=y' out/.config
-          grep -qx 'CONFIG_QFMT_V2=y' out/.config
-          mkdir -p artifacts
-          cp out/arch/arm/boot/zImage artifacts/
-          cp out/.config artifacts/kernel.config
-          cp out/System.map artifacts/
-          find out/arch/arm/boot -name '*.dtb' -type f -print0 | tar --null -T - -czf artifacts/device-trees.tar.gz
-          git rev-parse HEAD > artifacts/source-commit.txt
-          git -C "$RUNNER_TEMP/gcc49" rev-parse HEAD > artifacts/compiler-commit.txt
-          printf '%s\n' 'Kernel only. Not a flashable boot image. Preserve the backed-up ramdisk and verify packaging before flashing.' > artifacts/READ-ME.txt
-          (cd artifacts && sha256sum zImage kernel.config System.map device-trees.tar.gz > SHA256SUMS)
-
-      - name: Upload kernel
-        uses: actions/upload-artifact@v4
-        with:
-          name: j250f-android9-binder7-kernel-${{ github.run_number }}
-          path: artifacts/
-          if-no-files-found: error
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-diagnostics-${{ github.run_number }}
-          path: |
-            build.log
-            out/.config
-          include-hidden-files: true
-          if-no-files-found: ignore
- out/System.map
+          grep -q ' ist30xx_fb_notifier_callback$' out/System.map
           grep -q ' j2fb_fillrect$' out/System.map
           grep -q ' j2fb_copyarea$' out/System.map
           grep -q ' j2fb_imageblit$' out/System.map
