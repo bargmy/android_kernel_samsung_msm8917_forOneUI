@@ -1,4 +1,4 @@
-name: J250F Binder 8 kernel
+name: J250F Android 9 Binder 7 kernel
 
 on:
   workflow_dispatch:
@@ -72,20 +72,20 @@ jobs:
       - name: Test firmware DT2W driver logic
         run: python3 tools/testing/ist30xxh_dt2w_test.py
 
-      - name: Configure and verify Binder 8
+      - name: Configure and verify Android 9 Binder 7
         run: |
           set -euxo pipefail
           make O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon j2y18lte_defconfig
           make O=out ARCH=arm CC="ccache ${CROSS_COMPILE}gcc" HOSTCFLAGS=-fcommon olddefconfig
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
-          grep -qx '# CONFIG_ANDROID_BINDER_IPC_32BIT is not set' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_QUOTA=y' out/.config
           grep -qx 'CONFIG_QFMT_V2=y' out/.config
           grep -qx 'CONFIG_ANDROID_BINDER_IPC=y' out/.config
           grep -qx 'CONFIG_SEC_J2Y18LTE_PROJECT=y' out/.config
           grep -qx 'CONFIG_TOUCHSCREEN_IST30XXH_DT2W_SUPPORT=y' out/.config
           grep -qx 'CONFIG_FB=y' out/.config
-          grep -qx '# CONFIG_SEC_CACHE_KMSG is not set' out/.config
+          grep -qx 'CONFIG_SEC_CACHE_KMSG=y' out/.config
           grep -qx 'CONFIG_DEVTMPFS=y' out/.config
           for option in VT VT_CONSOLE FRAMEBUFFER_CONSOLE FONT_8x16 FB_MSM_MDSS FB_CFB_FILLRECT FB_CFB_COPYAREA FB_CFB_IMAGEBLIT; do
             grep -qx "CONFIG_${option}=y" out/.config
@@ -104,12 +104,12 @@ jobs:
         run: |
           set -euxo pipefail
           test -s out/arch/arm/boot/zImage
-          grep -q ' ist30xx_fb_notifier_callback$' out/System.map
+          grep -q ' cache_kmsg_thread
           grep -q ' j2fb_fillrect$' out/System.map
           grep -q ' j2fb_copyarea$' out/System.map
           grep -q ' j2fb_imageblit$' out/System.map
           grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
-          grep -qx '# CONFIG_ANDROID_BINDER_IPC_32BIT is not set' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
           grep -qx 'CONFIG_QUOTA=y' out/.config
           grep -qx 'CONFIG_QFMT_V2=y' out/.config
           mkdir -p artifacts
@@ -125,7 +125,79 @@ jobs:
       - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: j250f-binder8-kernel-${{ github.run_number }}
+          name: j250f-android9-binder7-kernel-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.run_number }}
+          path: |
+            build.log
+            out/.config
+          include-hidden-files: true
+          if-no-files-found: ignore
+ out/System.map
+          grep -qx 'CONFIG_SEC_CACHE_KMSG=y' out/.config
+          grep -q ' ist30xx_fb_notifier_callback
+          grep -q ' j2fb_fillrect$' out/System.map
+          grep -q ' j2fb_copyarea$' out/System.map
+          grep -q ' j2fb_imageblit$' out/System.map
+          grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
+          grep -qx 'CONFIG_QUOTA=y' out/.config
+          grep -qx 'CONFIG_QFMT_V2=y' out/.config
+          mkdir -p artifacts
+          cp out/arch/arm/boot/zImage artifacts/
+          cp out/.config artifacts/kernel.config
+          cp out/System.map artifacts/
+          find out/arch/arm/boot -name '*.dtb' -type f -print0 | tar --null -T - -czf artifacts/device-trees.tar.gz
+          git rev-parse HEAD > artifacts/source-commit.txt
+          git -C "$RUNNER_TEMP/gcc49" rev-parse HEAD > artifacts/compiler-commit.txt
+          printf '%s\n' 'Kernel only. Not a flashable boot image. Preserve the backed-up ramdisk and verify packaging before flashing.' > artifacts/READ-ME.txt
+          (cd artifacts && sha256sum zImage kernel.config System.map device-trees.tar.gz > SHA256SUMS)
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: j250f-android9-binder7-kernel-${{ github.run_number }}
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.run_number }}
+          path: |
+            build.log
+            out/.config
+          include-hidden-files: true
+          if-no-files-found: ignore
+ out/System.map
+          grep -q ' j2fb_fillrect$' out/System.map
+          grep -q ' j2fb_copyarea$' out/System.map
+          grep -q ' j2fb_imageblit$' out/System.map
+          grep -E 'BINDER|SEC_J2Y18LTE_PROJECT' out/.config
+          grep -qx 'CONFIG_ANDROID_BINDER_IPC_32BIT=y' out/.config
+          grep -qx 'CONFIG_QUOTA=y' out/.config
+          grep -qx 'CONFIG_QFMT_V2=y' out/.config
+          mkdir -p artifacts
+          cp out/arch/arm/boot/zImage artifacts/
+          cp out/.config artifacts/kernel.config
+          cp out/System.map artifacts/
+          find out/arch/arm/boot -name '*.dtb' -type f -print0 | tar --null -T - -czf artifacts/device-trees.tar.gz
+          git rev-parse HEAD > artifacts/source-commit.txt
+          git -C "$RUNNER_TEMP/gcc49" rev-parse HEAD > artifacts/compiler-commit.txt
+          printf '%s\n' 'Kernel only. Not a flashable boot image. Preserve the backed-up ramdisk and verify packaging before flashing.' > artifacts/READ-ME.txt
+          (cd artifacts && sha256sum zImage kernel.config System.map device-trees.tar.gz > SHA256SUMS)
+
+      - name: Upload kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: j250f-android9-binder7-kernel-${{ github.run_number }}
           path: artifacts/
           if-no-files-found: error
 

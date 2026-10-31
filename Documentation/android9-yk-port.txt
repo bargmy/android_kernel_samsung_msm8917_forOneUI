@@ -1,0 +1,66 @@
+J250 Android 9 Samsung YK port
+=============================
+
+This branch targets the 32-bit Samsung Android 9 userspace inspected on
+j2y18lte. This configuration is not a universal Android 9 configuration
+and should not be substituted for the One UI 3.1 branch.
+
+Confirmed userspace ABI
+----------------------
+The mounted system reports API 28 and J3300ZCU4CUE2. Its servicemanager,
+libbinder.so and libhwbinder.so query BINDER_VERSION and compare the
+returned protocol to 7. A Binder 8 kernel will fail those checks even
+though the kernel and userspace are both 32-bit ARM.
+
+j2y18lte_defconfig therefore enables CONFIG_ANDROID_BINDER_IPC_32BIT.
+drivers/staging/android/binder.h translates this into BINDER_IPC_32BIT;
+the UAPI uses 32-bit Binder pointers/sizes and protocol version 7.
+The build workflow checks the resolved configuration before building and
+again before uploading artifacts.
+
+Boot image integration remains required
+---------------------------------------
+The system partition is a traditional ext4 /system filesystem with
+vendor files under /system/vendor. No /system/bin/init was present when
+inspected. The installed boot image contains a LineageOS 16 ramdisk,
+including /init, init.rc, init.environ.rc and a monolithic SELinux policy.
+Its environment references Lineage framework jars. That ramdisk is not
+a validated match for the Samsung system.
+
+The kernel defaults to executing /init from the external ramdisk.
+CONFIG_INITRAMFS_SOURCE is empty. Merely copying an executable to
+/system/bin/init does not supply an early mount and exec mechanism.
+If a different boot image uses such a mechanism, inspect and preserve
+that boot image's bootstrap and mount configuration explicitly.
+
+Use an Android 9 Samsung init and compatible init scripts, environment,
+fstab and SELinux policy, adapting the hardware configuration to J250.
+A donor J3300 kernel or device tree must not replace the J250 hardware
+kernel/device tree. Do not reuse the Lineage BOOTCLASSPATH and
+SYSTEMSERVERCLASSPATH without comparing them with the installed ROM.
+
+The installed vendor fstab contains only a commented system entry; an
+early mount must be supplied elsewhere. Vendor scripts also reference
+a misc partition absent from the inspected J250 partition map and try
+to load audio modules absent from the inspected system. These are
+separate integration issues; a Binder configuration change does not
+resolve them.
+
+Validation
+----------
+The GitHub workflow builds zImage and device trees, checks the generated
+Binder configuration and uploads artifacts. Those artifacts are kernel
+build outputs, not a flashable boot image. A successful build does not
+establish boot, display, radio, audio, camera or storage compatibility.
+Device testing and boot-image assembly are still required.
+
+Cache diagnostics
+-----------------
+CONFIG_SEC_CACHE_KMSG is enabled for this diagnostic build. Its worker
+uses a private ext4 mount of J250 cache partition mmcblk0p46 and saves
+alternating /cache/kernel-latest-0.log and kernel-latest-1.log snapshots
+when the kernel log changes, checking every 500 ms. It reserves at least
+8 MiB free and exports available previous-boot pstore records. Check
+/proc/j2_cache_ready after boot. Writes require writable cache and storage
+availability; failures before that point and an immediate panic may not
+be captured. This option increases filesystem writes during diagnosis.
